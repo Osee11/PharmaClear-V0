@@ -9,18 +9,17 @@ app.use(express.json());
 
 const upload = multer({ dest: 'uploads/' });
 
-// Simulation de ton futur function calling avec Meta
+// Simulation de la function calling avec Meta
 app.post('/api/analyze', upload.single('prescription'), async (req, res) => {
   console.log('Image reçue:', req.file.originalname);
   
   // SIMULATION de ce que fera SAM 3.1 + Spark
-  // Le 26 tu remplaceras ce bloc par le vrai appel API
   const mockDrugs = [
     { name: "Paracetamol", dosage: "500mg" },
     { name: "Ibuprofene", dosage: "200mg" }
   ];
 
-  // Ton idée avec Promise.all - tu la montres déjà ici
+  //  Promise.all
   const interactionChecks = mockDrugs.map(async (drug) => {
     // Simulation d'un check async
     return { drug: drug.name, safe: true };
@@ -33,8 +32,8 @@ app.post('/api/analyze', upload.single('prescription'), async (req, res) => {
     detected_drugs: mockDrugs,
     safety_check: results,
     explanations: {
-      fon: "Amon, a gble Paracetamol kpodo Ibuprofene, enyon... E ma gble amon deji o.",
-      fr: "Attention : Ne prenez pas Paracétamol et Ibuprofène ensemble à jeun, risque d'estomac.",
+      fon: "Amon, ma nu Paracetamol kpodo Ibuprofene kpo oo, ... E na do xo mè wli wé.",
+      fr: "Attention : Ne prenez pas Paracétamol et Ibuprofène ensemble à jeun, risque de maux de ventre.",
       en: "Warning: Avoid taking Paracetamol and Ibuprofen together on an empty stomach."
     }
   });
