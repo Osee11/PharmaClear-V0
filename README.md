@@ -1,4 +1,4 @@
-# PharmaClear V0 - Pill Scanner for Africa
+# PharmaClear V0 - Pill Scanner for Africa and The world
 **Meta Global AI Developer Hackathon - APPROVED - Ready for SAM 3.1 + Muse Spark**
 
 Problem: 60% of prescriptions in Benin are handwritten. Patients can't read them, risk dangerous drug interactions.
