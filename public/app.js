@@ -6,7 +6,7 @@ async function upload() {
   
   const res = await fetch('/api/analyze', { method: 'POST', body: formData });
   const data = await res.json();
-  document.getElementById('result').innerText = JSON.stringify(data, null, 2);
+  
   const ex = data.explanations;
   document.getElementById('result').innerText = 
     `DRUGS: ${JSON.stringify(data.detected_drugs, null, 2)}\n\n` +
