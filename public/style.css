@@ -1,4 +1,117 @@
-body{font-family: monospace; max-width:700px; margin:40px auto; background:#f9f9f9}
-input,button{padding:8px; margin:5px}
-pre{background:#000; color:#0f0; padding:15px; border-radius:8px; overflow:auto}
-h1{color:#1a1a1a}
+:root {
+  --green: #0f7a5a;
+  --green-dark: #0a5c44;
+  --bg: #f4f8f6;
+  --text: #17302a;
+  --muted: #5d7770;
+  --card: #ffffff;
+  --warn-bg: #fff4d6;
+  --warn-text: #7a5600;
+  --bad: #b3261e;
+}
+
+* { box-sizing: border-box; }
+
+/* Sans cette règle, display:block (ex. .thumb) l'emporte sur l'attribut hidden. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+header {
+  background: var(--green);
+  color: #fff;
+  padding: 18px 16px 14px;
+  text-align: center;
+}
+header h1 { margin: 0; font-size: 1.6rem; }
+.tagline { margin: 2px 0 10px; opacity: .9; }
+
+.pill {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: .8rem;
+  background: rgba(255, 255, 255, .2);
+}
+.pill-ok   { background: #d6f5e6; color: #0a5c44; }
+.pill-bad  { background: #fde0de; color: var(--bad); }
+
+main { max-width: 560px; margin: 0 auto; padding: 16px; }
+section > p:first-child { margin-top: 0; }
+
+section, .thumb {
+  background: var(--card);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .08);
+}
+.thumb { display: block; width: 100%; max-height: 260px; object-fit: contain; padding: 6px; }
+
+.btn {
+  display: block;
+  width: 100%;
+  margin: 10px 0 0;
+  padding: 14px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+}
+.btn-main { background: var(--green); color: #fff; }
+.btn-main:active { background: var(--green-dark); }
+.btn-alt { background: #e3efe9; color: var(--green-dark); }
+
+.error {
+  background: #fde0de;
+  color: var(--bad);
+  padding: 12px 14px;
+  border-radius: 12px;
+}
+
+.banner {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  font-size: .9rem;
+}
+
+#step-progress { text-align: center; }
+#step-progress h2 { margin: 8px 0 4px; font-size: 1.15rem; }
+#step-progress p { margin: 0; color: var(--muted); }
+
+.spinner {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto;
+  border: 4px solid #cfe5db;
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+.spinner.stopped { animation: none; border-color: var(--green); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.result h3 { margin: 14px 0 6px; font-size: 1rem; color: var(--green-dark); }
+.result ul { margin: 0; padding-left: 20px; }
+.result .lang { margin: 8px 0; padding: 10px 12px; background: #f1f7f4; border-radius: 10px; }
+.result .lang strong { display: block; font-size: .8rem; color: var(--muted); text-transform: uppercase; }
+
+footer {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 0 16px 28px;
+  font-size: .8rem;
+  color: var(--muted);
+  text-align: center;
+}

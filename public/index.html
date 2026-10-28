@@ -1,10 +1,59 @@
 <!DOCTYPE html>
-<html><head><title>PharmaClear V0</title><link rel="stylesheet" href="style.css"></head>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PharmaClear</title>
+  <link rel="stylesheet" href="style.css">
+</head>
 <body>
-<h1>PharmaClear - Pill Scanner for Africa and the World</h1>
-<p>Upload handwritten prescription - V0 Mock</p>
-<input type="file" id="fileInput" accept="image/*">
-<button onclick="upload()">Analyze</button>
-<pre id="result"></pre>
-<script src="app.js"></script>
-</body></html>
+  <header>
+    <h1>PharmaClear</h1>
+    <p class="tagline">Comprendre son ordonnance</p>
+    <span id="relay" class="pill pill-wait">Relais : vérification…</span>
+  </header>
+
+  <main>
+    <!-- Photo envoyée (visible pendant l'analyse et avec le résultat) -->
+    <img id="thumb" class="thumb" alt="Ordonnance photographiée" hidden>
+
+    <!-- Étape 1 : choisir la photo -->
+    <section id="step-pick">
+      <p>Photographiez l'ordonnance : texte bien visible, bonne lumière, sans reflet.</p>
+      <label class="btn btn-main">
+        📷 Prendre une photo
+        <input id="cam" type="file" accept="image/*" capture="environment" hidden>
+      </label>
+      <label class="btn btn-alt">
+        🖼️ Choisir une image
+        <input id="gal" type="file" accept="image/*" hidden>
+      </label>
+    </section>
+
+    <p id="error" class="error" role="alert" hidden></p>
+
+    <!-- Étape 2 : envoi et attente -->
+    <section id="step-progress" hidden>
+      <div class="spinner" id="spinner"></div>
+      <h2 id="status-title"></h2>
+      <p id="status-detail"></p>
+    </section>
+
+    <!-- Étape 3 : résultat -->
+    <section id="step-result" hidden>
+      <div id="mock-banner" class="banner" hidden>
+        Mode test : ce résultat est simulé, il ne vient pas de la photo.
+      </div>
+      <div id="result-content"></div>
+      <button id="new-btn" class="btn btn-alt" type="button">Nouvelle ordonnance</button>
+    </section>
+  </main>
+
+  <footer>
+    Cet outil aide à comprendre une ordonnance. Il ne remplace ni le médecin
+    ni le pharmacien : en cas de doute, montrez l'ordonnance au pharmacien.
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

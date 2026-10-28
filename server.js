@@ -9,19 +9,15 @@ app.use(express.json());
 
 const upload = multer({ dest: 'uploads/' });
 
-// Simulation de la function calling avec Meta
 app.post('/api/analyze', upload.single('prescription'), async (req, res) => {
   console.log('Image reçue:', req.file.originalname);
   
-  // SIMULATION de ce que fera SAM 3.1 + Spark
   const mockDrugs = [
     { name: "Paracetamol", dosage: "500mg" },
     { name: "Ibuprofene", dosage: "200mg" }
   ];
 
-  //  Promise.all
   const interactionChecks = mockDrugs.map(async (drug) => {
-    // Simulation d'un check async
     return { drug: drug.name, safe: true };
   });
 
