@@ -29,7 +29,7 @@
  *
  * Dossiers créés automatiquement :
  *   queue/    photos en attente d'envoi
- *   done/     photos déjà traitées
+ *   done/     ancien emplacement, vidé au démarrage (les nouvelles photos sont supprimées)
  *   results/  réponses JSON de Node (une par photo)
  *
  * Limites connues (à assumer, c'est un prototype) : un seul client est
@@ -71,6 +71,8 @@
 #define IO_TIMEOUT_S       10                  /* délai lecture/écriture     */
 #define RETRY_INTERVAL_S   3                   /* pause entre deux relances  */
 #define CURL_TIMEOUT_S     60                  /* délai max d'un envoi Node  */
+#define RETENTION_SECONDS  86400               /* conservation après traitement */
+#define CLEANUP_INTERVAL_S 60                  /* fréquence du nettoyage      */
 
 #define QUEUE_DIR   "queue"
 #define DONE_DIR    "done"
@@ -176,6 +178,70 @@ static int ensure_dir(const char *path)
 static int file_exists(const char *path)
 {
     return access(path, F_OK) == 0;
+}
+
+static int processed_name(const char *name, int is_result)
+{
+    const char *dot = strrchr(name, '.');
+    if (!dot || dot == name) return 0;
+    if (is_result) {
+        if (strcmp(dot, ".json") != 0) return 0;
+    } else if (strcmp(dot, ".jpg") != 0 &&
+               strcmp(dot, ".png") != 0 &&
+               strcmp(dot, ".webp") != 0) {
+        return 0;
+    }
+
+    size_t idlen = (size_t)(dot - name);
+    if (idlen > 64) return 0;
+    char id[65];
+    memcpy(id, name, idlen);
+    id[idlen] = '\0';
+    return valid_id(id);
+}
+
+static size_t cleanup_dir(const char *dir, int is_result, time_t now,
+                          time_t max_age)
+{
+    DIR *d = opendir(dir);
+    if (!d) {
+        log_msg("ERREUR : ouverture du dossier %s : %s", dir, strerror(errno));
+        return 0;
+    }
+
+    size_t removed = 0;
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+        if (!processed_name(entry->d_name, is_result)) continue;
+
+        char path[256];
+        int n = snprintf(path, sizeof path, "%s/%s", dir, entry->d_name);
+        if (n < 0 || (size_t)n >= sizeof path) continue;
+
+        struct stat st;
+        if (lstat(path, &st) != 0 || !S_ISREG(st.st_mode) ||
+            difftime(now, st.st_mtime) < max_age) {
+            continue;
+        }
+        if (unlink(path) == 0) {
+            removed++;
+        } else if (errno != ENOENT) {
+            log_msg("ERREUR : suppression de %s : %s", path, strerror(errno));
+        }
+    }
+    closedir(d);
+    return removed;
+}
+
+static void cleanup_processed_files(void)
+{
+    time_t now = time(NULL);
+    size_t photos = cleanup_dir(DONE_DIR, 0, now, 0);
+    size_t results = cleanup_dir(RESULTS_DIR, 1, now, RETENTION_SECONDS);
+    if (photos || results) {
+        log_msg("Nettoyage : %zu ancienne(s) photo(s) et %zu résultat(s) de plus de 24 h supprimé(s)",
+                photos, results);
+    }
 }
 
 /* Lit un fichier entier en mémoire (NUL-terminé). Renvoie NULL en cas d'échec. */
@@ -368,7 +434,7 @@ static void handle_status(int fd, const char *raw_id)
     char id[65]; /* valid_id garantit 64 caractères maximum */
     memcpy(id, raw_id, strlen(raw_id) + 1);
 
-    char path[256];
+    char path[512];
     snprintf(path, sizeof path, "%s/%s.json", RESULTS_DIR, id);
     size_t rlen = 0;
     char *res = read_file(path, &rlen, MAX_RESULT);
@@ -483,11 +549,10 @@ static int forward_one(const char *name)
     const char *ctype = ctype_from_ext(ext);
     if (!valid_id(id) || !ctype) return 1;
 
-    char src[256], tmp[256], dst[256], donep[256], form[400];
+    char src[256], tmp[256], dst[256], form[400];
     snprintf(src, sizeof src, "%s/%s", QUEUE_DIR, name);
     snprintf(tmp, sizeof tmp, "%s/.tmp-%s.json", RESULTS_DIR, id);
     snprintf(dst, sizeof dst, "%s/%s.json", RESULTS_DIR, id);
-    snprintf(donep, sizeof donep, "%s/%s", DONE_DIR, name);
     snprintf(form, sizeof form, "prescription=@%s;type=%s", src, ctype);
 
     log_msg("Envoi de %s vers Node...", id);
@@ -545,8 +610,11 @@ static int forward_one(const char *name)
         unlink(tmp);
         return 0;
     }
-    if (rename(src, donep) != 0)
-        log_msg("Attention : impossible de déplacer %s vers %s/", src, DONE_DIR);
+    if (unlink(src) != 0) {
+        log_msg("ERREUR : résultat reçu mais suppression de la photo %s impossible : %s",
+                src, strerror(errno));
+        return 0;
+    }
 
     log_msg("OK Résultat reçu pour %s -> %s", id, dst);
     return 1;
@@ -555,7 +623,13 @@ static int forward_one(const char *name)
 static void *forwarder_thread(void *arg)
 {
     (void)arg;
+    time_t last_cleanup = time(NULL);
     while (g_running) {
+        time_t now = time(NULL);
+        if (difftime(now, last_cleanup) >= CLEANUP_INTERVAL_S) {
+            cleanup_processed_files();
+            last_cleanup = now;
+        }
         DIR *d = opendir(QUEUE_DIR);
         if (d) {
             struct dirent *e;
@@ -588,6 +662,7 @@ int main(int argc, char **argv)
 
     if (ensure_dir(QUEUE_DIR) || ensure_dir(DONE_DIR) || ensure_dir(RESULTS_DIR))
         return 1;
+    cleanup_processed_files();
 
     signal(SIGPIPE, SIG_IGN);
     struct sigaction sa;

@@ -5,7 +5,8 @@ const params = new URLSearchParams(location.search);
 // Adresse du relais : même machine que cette page, port 8080.
 // On peut la forcer avec ?relay=http://192.168.1.20:8080
 const RELAY = params.get('relay') ||
-  (location.hostname ? `${location.protocol}//${location.hostname}:8080`
+  (location.protocol === 'https:' ? '/relay'
+    : location.hostname ? `${location.protocol}//${location.hostname}:8080`
                      : 'http://localhost:8080');
 // Si le serveur C est lancé avec PHARMA_TOKEN, ouvrir la page avec ?token=...
 const TOKEN = params.get('token') || '';
@@ -16,6 +17,8 @@ const POLL_MS = 2000;
 const STORAGE_KEY = 'pharmaclear:lastId';
 const THUMB_KEY = 'pharmaclear:lastThumb';
 const THUMB_SIDE = 700;     // petite miniature gardée pour la reprise après rechargement
+const JOB_DB = 'pharmaclear';
+const JOB_STORE = 'pending';
 
 const $ = (id) => document.getElementById(id);
 
@@ -41,6 +44,52 @@ function clearId()  { try { localStorage.removeItem(STORAGE_KEY); } catch (e) { 
 function saveThumb(u) { try { localStorage.setItem(THUMB_KEY, u); } catch (e) { /* trop gros ou indisponible */ } }
 function loadThumb()  { try { return localStorage.getItem(THUMB_KEY); } catch (e) { return null; } }
 function clearThumb() { try { localStorage.removeItem(THUMB_KEY); } catch (e) { /* rien */ } }
+
+function openJobDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(JOB_DB, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(JOB_STORE, { keyPath: 'id' });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('impossible d’ouvrir le stockage local'));
+  });
+}
+
+async function saveJob(job) {
+  const db = await openJobDb();
+  await new Promise((resolve, reject) => {
+    const transaction = db.transaction(JOB_STORE, 'readwrite');
+    transaction.objectStore(JOB_STORE).put(job);
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error || new Error('impossible d’enregistrer la photo localement'));
+    transaction.onabort = () => reject(transaction.error || new Error('enregistrement local annulé'));
+  });
+  db.close();
+}
+
+async function loadJobs() {
+  const db = await openJobDb();
+  const jobs = await new Promise((resolve, reject) => {
+    const request = db.transaction(JOB_STORE, 'readonly').objectStore(JOB_STORE).getAll();
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('impossible de lire la file locale'));
+  });
+  db.close();
+  return jobs;
+}
+
+async function deleteJob(id) {
+  const db = await openJobDb();
+  await new Promise((resolve, reject) => {
+    const transaction = db.transaction(JOB_STORE, 'readwrite');
+    transaction.objectStore(JOB_STORE).delete(id);
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error || new Error('impossible de supprimer la photo locale'));
+    transaction.onabort = () => reject(transaction.error || new Error('suppression locale annulée'));
+  });
+  db.close();
+}
 
 function show(id, visible) { $(id).hidden = !visible; }
 
@@ -120,7 +169,10 @@ function setProgress(state) {
                          'elle est gardée et part automatiquement au retour du réseau.';
   } else if (state === 'retry') {
     title.textContent = 'Relais injoignable…';
-    detail.textContent = 'Nouvelle tentative en cours. Vérifiez que vous êtes sur le même Wi-Fi.';
+    detail.textContent = 'La photo est gardée sur ce téléphone. Nouvelle tentative automatique au retour du réseau.';
+  } else if (state === 'offline') {
+    title.textContent = 'Hors connexion : photo gardée sur ce téléphone';
+    detail.textContent = 'Elle sera envoyée automatiquement quand le réseau et le relais seront disponibles.';
   } else if (state === 'resume') {
     title.textContent = 'Reprise du suivi de l\'ordonnance…';
     detail.textContent = '';
@@ -128,38 +180,187 @@ function setProgress(state) {
 }
 
 let pollTimer = null;
+let activeJob = null;
 
 function stopPolling() {
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
 }
 
-function startPolling(id) {
+function showJobThumb(job) {
+  const thumb = $('thumb');
+  if (thumb.src.startsWith('blob:')) URL.revokeObjectURL(thumb.src);
+  thumb.src = job.blob ? URL.createObjectURL(job.blob) : (job.thumbDataUrl || '');
+  show('thumb', Boolean(thumb.src));
+}
+
+async function failJob(job, message) {
+  stopPolling();
+  try {
+    await deleteJob(job.id);
+  } catch (e) {
+    console.error('Suppression de la photo en attente impossible :', e);
+    showError('La demande a échoué et sa copie locale n’a pas pu être supprimée. ' +
+              'Supprime les données du site depuis les paramètres du navigateur.');
+    showStep('pick');
+    return;
+  }
+  activeJob = null;
+  clearId();
+  clearThumb();
+  showError(message);
+  showStep('pick');
+}
+
+async function showResult(result) {
+  stopPolling();
+  if (activeJob) {
+    try {
+      await deleteJob(activeJob.id);
+    } catch (e) {
+      console.error('Suppression de la photo locale après résultat impossible :', e);
+      showError('Résultat reçu, mais la copie locale n’a pas pu être supprimée. ' +
+                'Supprime les données du site depuis les paramètres du navigateur.');
+    }
+  }
+  activeJob = null;
+  clearId();
+  clearThumb();
+  const thumb = $('thumb');
+  if (thumb.src.startsWith('blob:')) URL.revokeObjectURL(thumb.src);
+  thumb.removeAttribute('src');
+  show('thumb', false);
+  const box = $('result-content');
+  box.replaceChildren();
+
+  const r = result || {};
+  show('mock-banner', typeof r.status === 'string' && r.status.toUpperCase().includes('MOCK'));
+  if (r.status === 'error') {
+    showError(r.error || 'L’analyse n’a pas abouti. Montrez l’ordonnance au pharmacien.');
+    showStep('result');
+    return;
+  }
+
+  const wrap = el('div', 'result');
+
+  const drugs = Array.isArray(r.detected_drugs) ? r.detected_drugs : [];
+  const uncertain = Array.isArray(r.uncertain) ? r.uncertain : [];
+  wrap.appendChild(el('h3', null, 'Lectures estimées par le modèle (à confirmer)'));
+  if (drugs.length === 0 && uncertain.length === 0) {
+    wrap.appendChild(el('p', null, 'Aucun médicament n\'a pu être lu avec certitude. ' +
+                                   'Montrez l\'ordonnance au pharmacien.'));
+  }
+  if (drugs.length > 0) {
+    const ul = el('ul');
+    drugs.forEach((d) => {
+      const label = [d.name, d.dosage].filter(Boolean).join(' - ');
+      ul.appendChild(el('li', null, label));
+    });
+    wrap.appendChild(ul);
+    wrap.appendChild(el('p', null, 'Comparez avec l\'ordonnance papier : si un nom ne correspond pas, ' +
+                                   'ne vous fiez pas à ce résultat.'));
+  }
+
+  if (uncertain.length > 0) {
+    wrap.appendChild(el('h3', null, 'À vérifier avec un pharmacien'));
+    const ul = el('ul');
+    uncertain.forEach((d) => {
+      const label = [d.name, d.dosage, d.frequency, d.duration].filter(Boolean).join(' - ');
+      ul.appendChild(el('li', null, label || 'Médicament illisible'));
+    });
+    wrap.appendChild(ul);
+    wrap.appendChild(el('p', null, 'Ces médicaments incertains ne sont pas inclus dans la vérification des interactions.'));
+  }
+
+  const interactionChecks = Array.isArray(r.interactions) ? r.interactions : [];
+  wrap.appendChild(el('h3', null, 'Interactions médicamenteuses'));
+  if (interactionChecks.length === 0) {
+    wrap.appendChild(el('p', null, 'Interaction non vérifiée. La base ne permet pas de confirmer ' +
+                                   'les interactions ; l’absence d’alerte ne signifie pas absence de risque.'));
+  } else {
+    const list = el('ul');
+    interactionChecks.forEach((check) => {
+      if (check.status === 'verified') {
+        const source = [check.source, check.verified_on].filter(Boolean).join(' — ');
+        list.appendChild(el('li', null,
+          `${check.drug_a} + ${check.drug_b} : interaction documentée (${check.severity}) — ${source}`));
+      } else {
+        list.appendChild(el('li', null,
+          `${check.drug_a || 'Médicament inconnu'} + ${check.drug_b || 'médicament inconnu'} : interaction non vérifiée.`));
+      }
+    });
+    wrap.appendChild(list);
+    if (interactionChecks.some((check) => check.status === 'not_verified')) {
+      wrap.appendChild(el('p', null, 'La base est limitée : l’absence d’alerte ne signifie pas absence de risque.'));
+    }
+  }
+
+  const hasVerifiedAlert = interactionChecks.some((check) => check.status === 'verified');
+  const expl = hasVerifiedAlert && r.explanations && typeof r.explanations === 'object'
+    ? r.explanations
+    : {};
+  const langs = Object.keys(expl);
+  if (langs.length > 0) {
+    wrap.appendChild(el('h3', null, 'Explications'));
+    langs.forEach((code) => {
+      const block = el('div', 'lang');
+      block.appendChild(el('strong', null, LANG_LABELS[code] || code));
+      block.appendChild(el('span', null, String(expl[code])));
+      wrap.appendChild(block);
+    });
+    wrap.appendChild(el('p', null, 'Traduction automatique, à vérifier. Ne remplace pas un avis médical.'));
+  }
+
+  box.appendChild(wrap);
+  showStep('result');
+}
+
+function startPolling(job) {
   stopPolling();
   const tick = async () => {
     try {
-      const r = await fetchTimeout(`${RELAY}/status/${encodeURIComponent(id)}`,
-                                   { headers: relayHeaders() }, 8000);
-      if (r.status === 404) {
-        clearId();
-        showError('Cette ordonnance est introuvable sur le relais. Renvoyez-la.');
-        showStep('pick');
+      if (!job.relayId) {
+        if (!navigator.onLine) {
+          setProgress('offline');
+          pollTimer = setTimeout(tick, 5000);
+          return;
+        }
+        const upload = await fetchTimeout(`${RELAY}/upload`, {
+          method: 'POST',
+          headers: relayHeaders({ 'Content-Type': 'image/jpeg' }),
+          body: job.blob,
+        }, 30000);
+        if (upload.status === 400 || upload.status === 413) {
+          let reason = `Le relais a refusé la photo (code ${upload.status}).`;
+          try { const data = await upload.json(); if (data.error) reason = data.error; } catch (e) { /* réponse non JSON */ }
+          await failJob(job, reason);
+          return;
+        }
+        if (!upload.ok) throw new Error(`upload HTTP ${upload.status}`);
+        const data = await upload.json();
+        if (typeof data.id !== 'string' || !data.id) throw new Error('identifiant du relais manquant');
+        job.relayId = data.id;
+        job.blob = null;
+        await saveJob(job);
+        saveId(job.relayId);
+      }
+
+      const response = await fetchTimeout(`${RELAY}/status/${encodeURIComponent(job.relayId)}`,
+                                          { headers: relayHeaders() }, 8000);
+      if (response.status === 404) {
+        await failJob(job, 'Cette ordonnance a expiré sur le relais. Renvoyez-la.');
         return;
       }
-      if (r.status === 401) {
-        showError('Accès refusé par le relais (token invalide).');
-        showStep('pick');
-        return;
-      }
-      const data = await r.json();
+      if (!response.ok) throw new Error(`status HTTP ${response.status}`);
+      const data = await response.json();
       if (data.status === 'done') {
-        showResult(data.result);
+        await showResult(data.result);
         return;
       }
       setProgress('queued');
     } catch (e) {
-      setProgress('retry');
+      setProgress(navigator.onLine ? 'retry' : 'offline');
     }
-    pollTimer = setTimeout(tick, POLL_MS);
+    pollTimer = setTimeout(tick, job.relayId ? POLL_MS : 5000);
   };
   tick();
 }
@@ -173,56 +374,13 @@ function el(tag, className, text) {
 
 const LANG_LABELS = { fr: 'Français', fon: 'Fon', en: 'English' };
 
-function showResult(result) {
-  stopPolling();
-  clearId();
-  clearThumb();
-  const box = $('result-content');
-  box.replaceChildren();
-
-  const r = result || {};
-  show('mock-banner', typeof r.status === 'string' && r.status.toUpperCase().includes('MOCK'));
-
-  const wrap = el('div', 'result');
-
-  const drugs = Array.isArray(r.detected_drugs) ? r.detected_drugs : [];
-  wrap.appendChild(el('h3', null, 'Médicaments lus sur l\'ordonnance'));
-  if (drugs.length === 0) {
-    wrap.appendChild(el('p', null, 'Aucun médicament n\'a pu être lu avec certitude. ' +
-                                   'Montrez l\'ordonnance au pharmacien.'));
-  } else {
-    const ul = el('ul');
-    drugs.forEach((d) => {
-      const label = [d.name, d.dosage].filter(Boolean).join(' - ');
-      ul.appendChild(el('li', null, label));
-    });
-    wrap.appendChild(ul);
-    const ref = $('thumb').hidden ? 'l\'ordonnance papier' : 'la photo ci-dessus';
-    wrap.appendChild(el('p', null, 'Comparez avec ' + ref + ' : si un nom ne correspond pas, ' +
-                                   'ne vous fiez pas à ce résultat.'));
-  }
-
-  const expl = r.explanations && typeof r.explanations === 'object' ? r.explanations : {};
-  const langs = Object.keys(expl);
-  if (langs.length > 0) {
-    wrap.appendChild(el('h3', null, 'Explications'));
-    langs.forEach((code) => {
-      const block = el('div', 'lang');
-      block.appendChild(el('strong', null, LANG_LABELS[code] || code));
-      block.appendChild(el('span', null, String(expl[code])));
-      wrap.appendChild(block);
-    });
-  }
-
-  box.appendChild(wrap);
-  showStep('result');
-}
-
 async function handleFile(file) {
   if (!file) return;
   show('error', false);
-  showStep('progress');
-  setProgress('sending');
+  if (activeJob) {
+    showError('Une ordonnance est déjà en cours. Attendez son résultat avant d’en envoyer une autre.');
+    return;
+  }
 
   let blob, thumbDataUrl;
   try {
@@ -233,40 +391,37 @@ async function handleFile(file) {
     return;
   }
 
-  const thumb = $('thumb');
-  if (thumb.src.startsWith('blob:')) URL.revokeObjectURL(thumb.src);
-  thumb.src = URL.createObjectURL(blob);
-  show('thumb', true);
-
+  const id = (crypto.randomUUID && crypto.randomUUID()) ||
+    `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  activeJob = { id, blob, thumbDataUrl, relayId: null, createdAt: Date.now() };
   try {
-    const r = await fetchTimeout(RELAY + '/upload', {
-      method: 'POST',
-      headers: relayHeaders({ 'Content-Type': 'image/jpeg' }),
-      body: blob,
-    }, 30000);
-
-    if (!r.ok) {
-      let msg = 'Le relais a refusé la photo (code ' + r.status + ').';
-      try { const j = await r.json(); if (j.error) msg = 'Le relais a refusé la photo : ' + j.error; } catch (e) { /* garde le message par défaut */ }
-      showError(msg);
-      showStep('pick');
-      return;
-    }
-
-    const data = await r.json();
-    saveId(data.id);
-    saveThumb(thumbDataUrl);
-    setProgress('queued');
-    startPolling(data.id);
+    await saveJob(activeJob);
   } catch (e) {
-    showError('Impossible de joindre le relais. Vérifiez que le serveur C tourne ' +
-              'et que vous êtes sur le même Wi-Fi que l\'ordinateur.');
+    console.error('Stockage local de la photo impossible :', e);
+    activeJob = null;
+    showError('Impossible de garder la photo sur ce téléphone. Vérifiez l’espace disponible et réessayez.');
     showStep('pick');
+    return;
   }
+
+  showJobThumb(activeJob);
+  showStep('progress');
+  setProgress(navigator.onLine ? 'sending' : 'offline');
+  startPolling(activeJob);
 }
 
-function resetAll() {
+async function resetAll() {
   stopPolling();
+  if (activeJob) {
+    try {
+      await deleteJob(activeJob.id);
+    } catch (e) {
+      console.error('Suppression de la photo locale impossible :', e);
+      showError('Impossible de supprimer la photo en attente du téléphone.');
+      return;
+    }
+    activeJob = null;
+  }
   clearId();
   clearThumb();
   show('error', false);
@@ -286,12 +441,46 @@ $('new-btn').addEventListener('click', resetAll);
 checkRelay();
 setInterval(checkRelay, 4000);
 
-// Si la page est rechargée pendant qu'une ordonnance est en cours, on reprend le suivi.
-const pendingId = loadId();
-if (pendingId) {
-  const savedThumb = loadThumb();
-  if (savedThumb) { $('thumb').src = savedThumb; show('thumb', true); }
-  showStep('progress');
-  setProgress('resume');
-  startPolling(pendingId);
+window.addEventListener('online', () => {
+  checkRelay();
+  if (activeJob) startPolling(activeJob);
+});
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/service-worker.js')
+    .catch((e) => console.error('Installation du cache hors ligne impossible :', e));
 }
+
+async function resumePendingJob() {
+  try {
+    let jobs = await loadJobs();
+    if (jobs.length === 0) {
+      const oldId = loadId();
+      if (oldId) {
+        const legacyJob = {
+          id: `legacy-${oldId}`,
+          relayId: oldId,
+          blob: null,
+          thumbDataUrl: loadThumb(),
+          createdAt: Date.now(),
+        };
+        await saveJob(legacyJob);
+        clearId();
+        clearThumb();
+        jobs = [legacyJob];
+      }
+    }
+    if (jobs.length === 0) return;
+    jobs.sort((a, b) => a.createdAt - b.createdAt);
+    activeJob = jobs[0];
+    showJobThumb(activeJob);
+    showStep('progress');
+    setProgress(navigator.onLine ? 'resume' : 'offline');
+    startPolling(activeJob);
+  } catch (e) {
+    console.error('Reprise de la file locale impossible :', e);
+    showError('Impossible de lire la photo gardée sur ce téléphone. Ne fermez pas cette page et réessayez.');
+  }
+}
+
+resumePendingJob();

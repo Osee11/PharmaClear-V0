@@ -1,0 +1,19 @@
+{
+  "name": "PharmaClear",
+  "short_name": "PharmaClear",
+  "description": "Prototype de transcription d'ordonnances, non validé cliniquement.",
+  "lang": "fr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f8f6",
+  "theme_color": "#0f7a5a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

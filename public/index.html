@@ -3,7 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f7a5a">
   <title>PharmaClear</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -41,6 +44,11 @@
 
     <!-- Étape 3 : résultat -->
     <section id="step-result" hidden>
+      <div class="banner">
+        Prototype non validé cliniquement. Vérifiez chaque nom avec un pharmacien.
+        Une interaction n’est confirmée que si elle figure dans la base documentée ;
+        sinon elle reste non vérifiée.
+      </div>
       <div id="mock-banner" class="banner" hidden>
         Mode test : ce résultat est simulé, il ne vient pas de la photo.
       </div>
@@ -50,7 +58,7 @@
   </main>
 
   <footer>
-    Cet outil aide à comprendre une ordonnance. Il ne remplace ni le médecin
+    Prototype de transcription, non validé cliniquement. Il ne remplace ni le médecin
     ni le pharmacien : en cas de doute, montrez l'ordonnance au pharmacien.
   </footer>
 
