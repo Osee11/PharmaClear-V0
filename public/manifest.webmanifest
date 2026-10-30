@@ -1,8 +1,8 @@
 {
   "name": "PharmaClear",
   "short_name": "PharmaClear",
-  "description": "Prototype de transcription d'ordonnances, non validé cliniquement.",
-  "lang": "fr",
+  "description": "Prescription transcription prototype, not clinically validated.",
+  "lang": "en",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

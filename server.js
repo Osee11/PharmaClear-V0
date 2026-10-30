@@ -3,21 +3,42 @@ require('./env'); // charge .env avant tout le reste
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const { analyzePrescription, UpstreamError, ModelOutputError, CONFIG } = require('./meta');
-const { checkDrugInteractions } = require('./interactions');
+const {
+  analyzePrescription,
+  translateInteractionSummaryToFon,
+  UpstreamError,
+  ModelOutputError,
+  CONFIG,
+} = require('./meta');
+const { addFonSummaries, checkDrugInteractions } = require('./interactions');
 
 const PORT = Number(process.env.PORT) || 3000;
 const RATE_LIMIT = Math.max(1, Number(process.env.API_RATE_LIMIT) || 20);
+const DAILY_ANALYSIS_LIMIT = process.env.DAILY_ANALYSIS_LIMIT === undefined
+  ? 100
+  : Number(process.env.DAILY_ANALYSIS_LIMIT);
 const RATE_WINDOW_MS = 60 * 1000;
 const RELAY_URL = (process.env.RELAY_URL || 'http://127.0.0.1:8080').replace(/\/+$/, '');
 const RELAY_TOKEN = process.env.RELAY_TOKEN || '';
+const INTERNAL_RELAY_TOKEN = process.env.INTERNAL_RELAY_TOKEN || '';
+const DEMO_ACCESS_CODE = process.env.DEMO_ACCESS_CODE || '';
+const DAILY_USAGE_FILE = path.join(__dirname, 'runtime', 'daily-analysis-usage.json');
 const TLS_CERT_FILE = process.env.TLS_CERT_FILE || '';
 const TLS_KEY_FILE = process.env.TLS_KEY_FILE || '';
 // Sans clé API (ou avec PHARMA_MOCK=1) : mode simulation, aucun appel à Meta.
 const MOCK = process.env.PHARMA_MOCK === '1' || !CONFIG.apiKey;
+
+if (!Number.isSafeInteger(DAILY_ANALYSIS_LIMIT) || DAILY_ANALYSIS_LIMIT < 0) {
+  throw new Error('DAILY_ANALYSIS_LIMIT must be a non-negative integer');
+}
+if (INTERNAL_RELAY_TOKEN &&
+    !/^[A-Za-z0-9._~-]{16,128}$/.test(INTERNAL_RELAY_TOKEN)) {
+  throw new Error('INTERNAL_RELAY_TOKEN must be 16-128 URL-safe characters');
+}
 
 const app = express();
 if (process.env.CORS_ORIGIN) app.use(cors({ origin: process.env.CORS_ORIGIN }));
@@ -26,6 +47,38 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
 const requestWindows = new Map();
+let dailyUsageQueue = Promise.resolve();
+
+function secretMatches(expected, received) {
+  if (!expected || typeof received !== 'string' || Buffer.byteLength(received) > 256) {
+    return false;
+  }
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(received);
+  return expectedBuffer.length === receivedBuffer.length &&
+    crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+function isInternalRelayRequest(req) {
+  return secretMatches(INTERNAL_RELAY_TOKEN, req.get('X-Internal-Relay-Token'));
+}
+
+function requireDemoAccess(req, res, next) {
+  if (!DEMO_ACCESS_CODE || secretMatches(DEMO_ACCESS_CODE, req.get('X-Demo-Access-Code'))) {
+    return next();
+  }
+  return res.status(401).json({
+    status: 'error',
+    error_code: 'demo_access_required',
+    error: 'A valid demo access code is required.',
+  });
+}
+
+function requireAnalysisAccess(req, res, next) {
+  if (isInternalRelayRequest(req)) return next();
+  return requireDemoAccess(req, res, next);
+}
+
 function limitAnalyzeRequests(req, res, next) {
   const now = Date.now();
   const address = req.ip || req.socket.remoteAddress || 'unknown';
@@ -50,9 +103,44 @@ function limitAnalyzeRequests(req, res, next) {
   return next();
 }
 
+function limitPublicAnalyzeRequests(req, res, next) {
+  if (isInternalRelayRequest(req)) return next();
+  return limitAnalyzeRequests(req, res, next);
+}
+
+async function consumeDailyAnalysisSlot() {
+  if (DAILY_ANALYSIS_LIMIT === 0) return { allowed: true };
+
+  const operation = dailyUsageQueue.then(async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    let usage = { date: today, count: 0 };
+    try {
+      const current = JSON.parse(await fs.promises.readFile(DAILY_USAGE_FILE, 'utf8'));
+      if (current && typeof current.date === 'string' &&
+          Number.isSafeInteger(current.count) && current.count >= 0 &&
+          current.date === today) {
+        usage = current;
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+
+    if (usage.count >= DAILY_ANALYSIS_LIMIT) return { allowed: false };
+
+    const nextUsage = { date: today, count: usage.count + 1 };
+    await fs.promises.mkdir(path.dirname(DAILY_USAGE_FILE), { recursive: true });
+    const temporaryFile = `${DAILY_USAGE_FILE}.${process.pid}.tmp`;
+    await fs.promises.writeFile(temporaryFile, `${JSON.stringify(nextUsage)}\n`, { mode: 0o600 });
+    await fs.promises.rename(temporaryFile, DAILY_USAGE_FILE);
+    return { allowed: true, remaining: DAILY_ANALYSIS_LIMIT - nextUsage.count };
+  });
+  dailyUsageQueue = operation.then(() => undefined, () => undefined);
+  return operation;
+}
+
 const upload = multer({
   dest: path.join(__dirname, 'uploads'),
-  limits: { fileSize: 6 * 1024 * 1024 },
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => cb(null, /^image\/(jpeg|png|webp)$/.test(file.mimetype)),
 });
 
@@ -79,8 +167,17 @@ async function proxyToRelay(route, options, res) {
   return res.send(body);
 }
 
-app.get('/relay/health', (req, res) => proxyToRelay('/health', { method: 'GET' }, res));
-app.post('/relay/upload', limitAnalyzeRequests,
+app.get('/api/access', (req, res) => {
+  res.json({
+    required: Boolean(DEMO_ACCESS_CODE),
+    authorized: !DEMO_ACCESS_CODE ||
+      secretMatches(DEMO_ACCESS_CODE, req.get('X-Demo-Access-Code')),
+  });
+});
+
+app.get('/relay/health', requireDemoAccess,
+  (req, res) => proxyToRelay('/health', { method: 'GET' }, res));
+app.post('/relay/upload', requireDemoAccess, limitAnalyzeRequests,
   express.raw({ type: '*/*', limit: '5mb' }),
   (req, res) => {
     const mime = req.get('content-type') || '';
@@ -94,23 +191,27 @@ app.post('/relay/upload', limitAnalyzeRequests,
       body: req.body,
     }, res);
   });
-app.get('/relay/status/:id', (req, res) => {
+app.get('/relay/status/:id', requireDemoAccess, (req, res) => {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(req.params.id)) {
     return res.status(400).json({ error: 'id invalide' });
   }
   return proxyToRelay(`/status/${encodeURIComponent(req.params.id)}`, { method: 'GET' }, res);
 });
 
-function mockResult() {
+async function mockResult() {
   const result = {
     status: 'success - MOCK',
+    image_quality: 'good',
+    notes: 'Synthetic TEST ONLY values; this is not a reading of the uploaded photo.',
     detected_drugs: [
-      { name: 'Paracetamol', dosage: '500mg' },
-      { name: 'Ibuprofene', dosage: '200mg' },
+      { name: 'TEST-ONLY-ALPHA', dosage: null, frequency: null, duration: null },
+      { name: 'TEST-ONLY-BETA', dosage: null, frequency: null, duration: null },
     ],
-    uncertain: [],
+    uncertain: [
+      { name: 'TEST-ONLY-UNCERTAIN', dosage: null, frequency: null, duration: null },
+    ],
   };
-  const interactions = checkDrugInteractions(result.detected_drugs);
+  const interactions = await checkDrugInteractions(result.detected_drugs);
   return {
     ...result,
     interaction_status: interactions.status,
@@ -138,7 +239,8 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, mode: MOCK ? 'mock' : 'meta', model: MOCK ? null : CONFIG.model });
 });
 
-app.post('/api/analyze', limitAnalyzeRequests, upload.single('prescription'), async (req, res) => {
+app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
+  upload.single('prescription'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'aucune image valide reçue (champ "prescription", jpeg/png/webp)' });
   }
@@ -150,15 +252,38 @@ app.post('/api/analyze', limitAnalyzeRequests, upload.single('prescription'), as
     if (!imageMatchesMime(buffer, file.mimetype)) {
       return res.status(400).json({ status: 'error', error: 'le contenu ne correspond pas à une image valide' });
     }
-    if (MOCK) return res.json(mockResult());
+    let dailySlot;
+    try {
+      dailySlot = await consumeDailyAnalysisSlot();
+    } catch (error) {
+      console.error('Could not read or update the daily analysis limit:', error.message);
+      return res.json({
+        status: 'error',
+        error_code: 'analysis_limit_unavailable',
+        error: 'The daily analysis limit could not be checked. Analysis was not run.',
+      });
+    }
+    if (!dailySlot.allowed) {
+      return res.json({
+        status: 'error',
+        error_code: 'daily_limit',
+        error: 'The daily analysis limit has been reached. Please try again tomorrow.',
+      });
+    }
+    if (MOCK) return res.json(await mockResult());
 
     const result = await analyzePrescription(buffer, file.mimetype);
-    const interactions = checkDrugInteractions(result.detected_drugs);
+    const interactions = await checkDrugInteractions(result.detected_drugs);
+    const checks = await addFonSummaries(
+      interactions.checks,
+      translateInteractionSummaryToFon,
+      (error) => console.error('Fon translation unavailable for a verified interaction:', error.message),
+    );
     console.log(`Analyse terminée : ${result.detected_drugs.length} lu(s), ${result.uncertain.length} à vérifier`);
     return res.json({
       ...result,
       interaction_status: interactions.status,
-      interactions: interactions.checks,
+      interactions: checks,
     });
   } catch (e) {
     if (e instanceof UpstreamError) {

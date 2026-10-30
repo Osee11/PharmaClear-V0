@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,61 +7,87 @@
   <title>PharmaClear</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header>
-    <h1>PharmaClear</h1>
-    <p class="tagline">Comprendre son ordonnance</p>
-    <span id="relay" class="pill pill-wait">Relais : vérification…</span>
+    <div class="header-content">
+      <div>
+        <h1>PharmaClear</h1>
+        <p class="tagline" data-i18n="tagline">Prescription reading with clear limits</p>
+      </div>
+      <label class="language-picker">
+        <span data-i18n="languageLabel">Language</span>
+        <select id="language-select" aria-label="Language">
+          <option value="en">EN</option>
+          <option value="fr">FR</option>
+          <option value="fon">Fon</option>
+        </select>
+      </label>
+    </div>
+    <p id="network-status" class="network-status" role="status" aria-live="polite">Checking connection…</p>
+    <details id="debug-relay" hidden>
+      <summary data-i18n="relayDetails">Relay details</summary>
+      <p id="relay-detail"></p>
+    </details>
   </header>
 
   <main>
-    <!-- Photo envoyée (visible pendant l'analyse et avec le résultat) -->
-    <img id="thumb" class="thumb" alt="Ordonnance photographiée" hidden>
+    <img id="thumb" class="thumb" alt="Prescription image" hidden>
 
-    <!-- Étape 1 : choisir la photo -->
-    <section id="step-pick">
-      <p>Photographiez l'ordonnance : texte bien visible, bonne lumière, sans reflet.</p>
+    <section id="access-panel" class="panel access-panel" hidden>
+      <h2 data-i18n="accessTitle">Demo access</h2>
+      <p data-i18n="accessPrompt">Enter the demo access code to submit an analysis.</p>
+      <label class="access-label" for="access-code" data-i18n="accessLabel">Access code</label>
+      <input id="access-code" class="access-input" type="password" autocomplete="current-password">
+      <button id="access-submit" class="btn btn-main" type="button" data-i18n="accessSubmit">Unlock analysis</button>
+      <p id="access-error" class="error" role="alert" hidden></p>
+    </section>
+
+    <section id="step-pick" class="panel">
+      <p data-i18n="photoInstructions">Take a clear, well-lit photo of the prescription.</p>
       <label class="btn btn-main">
-        📷 Prendre une photo
+        <span data-i18n="takePhoto">Take a photo</span>
         <input id="cam" type="file" accept="image/*" capture="environment" hidden>
       </label>
       <label class="btn btn-alt">
-        🖼️ Choisir une image
+        <span data-i18n="chooseImage">Choose an image</span>
         <input id="gal" type="file" accept="image/*" hidden>
       </label>
+      <button id="sample-btn" class="btn btn-sample" type="button" data-i18n="sampleButton">
+        Try a sample prescription
+      </button>
+      <p class="offline-note" data-i18n="offlineNote">
+        Analysis needs an internet connection at some point. Offline photos are saved on this phone.
+      </p>
     </section>
 
     <p id="error" class="error" role="alert" hidden></p>
 
-    <!-- Étape 2 : envoi et attente -->
-    <section id="step-progress" hidden>
-      <div class="spinner" id="spinner"></div>
+    <section id="step-progress" class="panel" hidden>
+      <div class="spinner" id="spinner" aria-hidden="true"></div>
       <h2 id="status-title"></h2>
       <p id="status-detail"></p>
     </section>
 
-    <!-- Étape 3 : résultat -->
-    <section id="step-result" hidden>
-      <div class="banner">
-        Prototype non validé cliniquement. Vérifiez chaque nom avec un pharmacien.
-        Une interaction n’est confirmée que si elle figure dans la base documentée ;
-        sinon elle reste non vérifiée.
-      </div>
-      <div id="mock-banner" class="banner" hidden>
-        Mode test : ce résultat est simulé, il ne vient pas de la photo.
+    <section id="step-result" class="panel" hidden>
+      <div id="sample-banner" class="banner sample-banner" hidden></div>
+      <div id="mock-banner" class="banner" hidden></div>
+      <div class="banner disclaimer" data-i18n="disclaimer">
+        Prototype, not clinically validated. This is a transcription aid, not medical advice.
       </div>
       <div id="result-content"></div>
-      <button id="new-btn" class="btn btn-alt" type="button">Nouvelle ordonnance</button>
+      <button id="new-btn" class="btn btn-alt" type="button" data-i18n="newPrescription">
+        Start a new prescription
+      </button>
     </section>
   </main>
 
   <footer>
-    Prototype de transcription, non validé cliniquement. Il ne remplace ni le médecin
-    ni le pharmacien : en cas de doute, montrez l'ordonnance au pharmacien.
+    <p data-i18n="footerDisclaimer">Prototype, not clinically validated. Always check the original prescription with a pharmacist.</p>
+    <p data-i18n="photoRetention">Photos are deleted right after analysis.</p>
   </footer>
 
-  <script src="app.js"></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>

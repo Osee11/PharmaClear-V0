@@ -1,49 +1,124 @@
 'use strict';
 
 const params = new URLSearchParams(location.search);
-
-// Adresse du relais : même machine que cette page, port 8080.
-// On peut la forcer avec ?relay=http://192.168.1.20:8080
-const RELAY = params.get('relay') ||
-  (location.protocol === 'https:' ? '/relay'
-    : location.hostname ? `${location.protocol}//${location.hostname}:8080`
-                     : 'http://localhost:8080');
-// Si le serveur C est lancé avec PHARMA_TOKEN, ouvrir la page avec ?token=...
-const TOKEN = params.get('token') || '';
-
-const MAX_SIDE = 1600;      // une photo de téléphone dépasse souvent 5 Mo : on la réduit
+const DEBUG_RELAY = params.get('debug') === '1';
+const RELAY = '/relay';
+const MAX_SIDE = 1600;
 const JPEG_QUALITY = 0.85;
 const POLL_MS = 2000;
 const STORAGE_KEY = 'pharmaclear:lastId';
 const THUMB_KEY = 'pharmaclear:lastThumb';
-const THUMB_SIDE = 700;     // petite miniature gardée pour la reprise après rechargement
+const THUMB_SIDE = 700;
 const JOB_DB = 'pharmaclear';
 const JOB_STORE = 'pending';
+const LANGUAGES = ['en', 'fr', 'fon'];
 
 const $ = (id) => document.getElementById(id);
+let language = 'en';
+let translations = {};
+let englishTranslations = {};
+let pollTimer = null;
+let activeJob = null;
+let latestResult = null;
+let latestResultIsSample = false;
+let thumbObjectUrl = null;
+let demoAccessCode = '';
 
-function relayHeaders(extra) {
-  const h = Object.assign({}, extra);
-  if (TOKEN) h['X-Token'] = TOKEN;
-  return h;
+function t(key, values = {}) {
+  const template = translations[key] || englishTranslations[key] || key;
+  return template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''));
 }
 
-async function fetchTimeout(url, options, ms) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
+function applyStaticTranslations() {
+  document.documentElement.lang = language;
+  document.title = `PharmaClear — ${t('tagline')}`;
+  document.querySelectorAll('[data-i18n]').forEach((node) => {
+    node.textContent = t(node.dataset.i18n);
+  });
+  $('language-select').setAttribute('aria-label', t('languageLabel'));
+  $('thumb').alt = t('photoInstructions');
+}
+
+async function setLanguage(nextLanguage) {
+  if (!LANGUAGES.includes(nextLanguage)) throw new Error('Unsupported language');
+  const response = await fetch(`/i18n/${nextLanguage}.json`);
+  if (!response.ok) throw new Error(`Could not load ${nextLanguage} translations (HTTP ${response.status})`);
+  const data = await response.json();
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(`Invalid ${nextLanguage} translations`);
+  }
+  language = nextLanguage;
+  translations = data;
+  try { localStorage.setItem('pharmaclear:language', language); } catch (error) { /* preference is optional */ }
+  $('language-select').value = language;
+  applyStaticTranslations();
+  updateNetworkStatus();
+  if (latestResult) renderResult(latestResult, latestResultIsSample);
+  if ($('step-progress').hidden === false && activeJob) setProgress('resume');
+}
+
+function relayHeaders(extra) {
+  const headers = Object.assign({}, extra);
+  if (demoAccessCode) headers['X-Demo-Access-Code'] = demoAccessCode;
+  return headers;
+}
+
+async function checkDemoAccess(code) {
+  const response = await fetch('/api/access', {
+    headers: code ? { 'X-Demo-Access-Code': code } : {},
+  });
+  if (!response.ok) throw new Error(`Access check failed (HTTP ${response.status})`);
+  return response.json();
+}
+
+async function submitDemoAccess() {
+  const code = $('access-code').value.trim();
   try {
-    return await fetch(url, Object.assign({}, options, { signal: ctrl.signal }));
+    const access = await checkDemoAccess(code);
+    if (!access.authorized) {
+      $('access-error').textContent = t('accessInvalid');
+      show('access-error', true);
+      return;
+    }
+    demoAccessCode = code;
+    try { sessionStorage.setItem('pharmaclear:demo-access-code', code); } catch (error) { /* session only */ }
+    show('access-panel', false);
+    show('access-error', false);
+    if (activeJob) {
+      showStep('progress');
+      startPolling(activeJob);
+    }
+  } catch (error) {
+    console.error('Could not validate demo access code:', error);
+    $('access-error').textContent = t('errorUnexpected');
+    show('access-error', true);
+  }
+}
+
+function requestDemoAccess() {
+  stopPolling();
+  show('access-panel', true);
+  $('access-error').textContent = t('accessInvalid');
+  show('access-error', true);
+  showStep('pick');
+}
+
+async function fetchTimeout(url, options = {}, ms = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, Object.assign({}, options, { signal: controller.signal }));
   } finally {
     clearTimeout(timer);
   }
 }
 
-function saveId(id) { try { localStorage.setItem(STORAGE_KEY, id); } catch (e) { /* stockage indisponible */ } }
-function loadId()   { try { return localStorage.getItem(STORAGE_KEY); } catch (e) { return null; } }
-function clearId()  { try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* rien */ } }
-function saveThumb(u) { try { localStorage.setItem(THUMB_KEY, u); } catch (e) { /* trop gros ou indisponible */ } }
-function loadThumb()  { try { return localStorage.getItem(THUMB_KEY); } catch (e) { return null; } }
-function clearThumb() { try { localStorage.removeItem(THUMB_KEY); } catch (e) { /* rien */ } }
+function saveId(id) { try { localStorage.setItem(STORAGE_KEY, id); } catch (error) { /* optional recovery hint */ } }
+function loadId() { try { return localStorage.getItem(STORAGE_KEY); } catch (error) { return null; } }
+function clearId() { try { localStorage.removeItem(STORAGE_KEY); } catch (error) { /* optional recovery hint */ } }
+function saveThumb(value) { try { localStorage.setItem(THUMB_KEY, value); } catch (error) { /* optional preview */ } }
+function loadThumb() { try { return localStorage.getItem(THUMB_KEY); } catch (error) { return null; } }
+function clearThumb() { try { localStorage.removeItem(THUMB_KEY); } catch (error) { /* optional preview */ } }
 
 function openJobDb() {
   return new Promise((resolve, reject) => {
@@ -52,7 +127,7 @@ function openJobDb() {
       request.result.createObjectStore(JOB_STORE, { keyPath: 'id' });
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('impossible d’ouvrir le stockage local'));
+    request.onerror = () => reject(request.error || new Error('Could not open local storage'));
   });
 }
 
@@ -62,8 +137,8 @@ async function saveJob(job) {
     const transaction = db.transaction(JOB_STORE, 'readwrite');
     transaction.objectStore(JOB_STORE).put(job);
     transaction.oncomplete = resolve;
-    transaction.onerror = () => reject(transaction.error || new Error('impossible d’enregistrer la photo localement'));
-    transaction.onabort = () => reject(transaction.error || new Error('enregistrement local annulé'));
+    transaction.onerror = () => reject(transaction.error || new Error('Could not save the photo locally'));
+    transaction.onabort = () => reject(transaction.error || new Error('Local save was cancelled'));
   });
   db.close();
 }
@@ -73,7 +148,7 @@ async function loadJobs() {
   const jobs = await new Promise((resolve, reject) => {
     const request = db.transaction(JOB_STORE, 'readonly').objectStore(JOB_STORE).getAll();
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('impossible de lire la file locale'));
+    request.onerror = () => reject(request.error || new Error('Could not read the local queue'));
   });
   db.close();
   return jobs;
@@ -85,74 +160,79 @@ async function deleteJob(id) {
     const transaction = db.transaction(JOB_STORE, 'readwrite');
     transaction.objectStore(JOB_STORE).delete(id);
     transaction.oncomplete = resolve;
-    transaction.onerror = () => reject(transaction.error || new Error('impossible de supprimer la photo locale'));
-    transaction.onabort = () => reject(transaction.error || new Error('suppression locale annulée'));
+    transaction.onerror = () => reject(transaction.error || new Error('Could not delete the local photo'));
+    transaction.onabort = () => reject(transaction.error || new Error('Local deletion was cancelled'));
   });
   db.close();
 }
 
 function show(id, visible) { $(id).hidden = !visible; }
 
-function showError(msg) {
-  $('error').textContent = msg;
+function showError(message) {
+  $('error').textContent = message;
   show('error', true);
 }
 
-function showStep(step) { // 'pick' | 'progress' | 'result'
+function showStep(step) {
   show('step-pick', step === 'pick');
   show('step-progress', step === 'progress');
   show('step-result', step === 'result');
 }
 
+function updateNetworkStatus() {
+  $('network-status').textContent = navigator.onLine
+    ? t('networkOnline')
+    : t('networkOffline');
+}
+
 async function checkRelay() {
-  const el = $('relay');
+  if (!DEBUG_RELAY) return;
+  const detail = $('relay-detail');
   try {
-    const r = await fetchTimeout(RELAY + '/health', {}, 3000);
-    if (!r.ok) throw new Error('health');
-    el.textContent = 'Relais connecté';
-    el.className = 'pill pill-ok';
-  } catch (e) {
-    el.textContent = 'Relais injoignable';
-    el.className = 'pill pill-bad';
+    const response = await fetchTimeout(`${RELAY}/health`, {}, 3000);
+    detail.textContent = response.ok
+      ? 'Relay connected'
+      : `Relay returned HTTP ${response.status}`;
+  } catch (error) {
+    detail.textContent = 'Relay unavailable';
   }
 }
 
 async function loadBitmap(file) {
   if (window.createImageBitmap) {
-    try { return await createImageBitmap(file); } catch (e) { /* on essaie autrement */ }
+    try { return await createImageBitmap(file); } catch (error) { /* use image element fallback */ }
   }
   return new Promise((resolve, reject) => {
-    const img = new Image();
+    const image = new Image();
     const url = URL.createObjectURL(file);
-    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image illisible')); };
-    img.src = url;
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Unreadable image')); };
+    image.src = url;
   });
 }
 
-function drawScaled(src, w, h, maxSide) {
-  const scale = Math.min(1, maxSide / Math.max(w, h));
+function drawScaled(source, width, height, maxSide) {
+  const scale = Math.min(1, maxSide / Math.max(width, height));
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(w * scale));
-  canvas.height = Math.max(1, Math.round(h * scale));
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#fff';               // fond blanc (utile pour les PNG transparents)
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
   return canvas;
 }
 
 async function prepareImage(file) {
-  const src = await loadBitmap(file);
-  const w = src.naturalWidth || src.width;
-  const h = src.naturalHeight || src.height;
-  const canvas = drawScaled(src, w, h, MAX_SIDE);
-  const thumbDataUrl = drawScaled(src, w, h, THUMB_SIDE).toDataURL('image/jpeg', 0.7);
-
+  const source = await loadBitmap(file);
+  const width = source.naturalWidth || source.width;
+  const height = source.naturalHeight || source.height;
+  const canvas = drawScaled(source, width, height, MAX_SIDE);
+  const thumbDataUrl = drawScaled(source, width, height, THUMB_SIDE)
+    .toDataURL('image/jpeg', 0.7);
   return new Promise((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve({ blob: b, thumbDataUrl })
-                           : reject(new Error('compression impossible'))),
-                  'image/jpeg', JPEG_QUALITY);
+    canvas.toBlob((blob) => (blob ? resolve({ blob, thumbDataUrl })
+      : reject(new Error('Image compression failed'))), 'image/jpeg', JPEG_QUALITY);
   });
 }
 
@@ -160,36 +240,33 @@ function setProgress(state) {
   const title = $('status-title');
   const detail = $('status-detail');
   $('spinner').classList.remove('stopped');
-  if (state === 'sending') {
-    title.textContent = 'Envoi de la photo au relais…';
-    detail.textContent = '';
+  if (state === 'sending' || state === 'resume') {
+    title.textContent = state === 'resume' ? t('resume') : t('reading');
+    detail.textContent = t('checkingInteractions');
   } else if (state === 'queued') {
-    title.textContent = 'Photo reçue, en file d\'attente';
-    detail.textContent = 'Elle est analysée dès que possible. Si le réseau est coupé, ' +
-                         'elle est gardée et part automatiquement au retour du réseau.';
+    title.textContent = t('reading');
+    detail.textContent = t('queuedDetail');
   } else if (state === 'retry') {
-    title.textContent = 'Relais injoignable…';
-    detail.textContent = 'La photo est gardée sur ce téléphone. Nouvelle tentative automatique au retour du réseau.';
+    title.textContent = t('retry');
+    detail.textContent = t('retryDetail');
   } else if (state === 'offline') {
-    title.textContent = 'Hors connexion : photo gardée sur ce téléphone';
-    detail.textContent = 'Elle sera envoyée automatiquement quand le réseau et le relais seront disponibles.';
-  } else if (state === 'resume') {
-    title.textContent = 'Reprise du suivi de l\'ordonnance…';
-    detail.textContent = '';
+    title.textContent = t('offlineProgress');
+    detail.textContent = t('offlineDetail');
   }
 }
 
-let pollTimer = null;
-let activeJob = null;
-
 function stopPolling() {
-  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
 }
 
 function showJobThumb(job) {
   const thumb = $('thumb');
-  if (thumb.src.startsWith('blob:')) URL.revokeObjectURL(thumb.src);
-  thumb.src = job.blob ? URL.createObjectURL(job.blob) : (job.thumbDataUrl || '');
+  if (thumbObjectUrl) URL.revokeObjectURL(thumbObjectUrl);
+  thumbObjectUrl = job.blob ? URL.createObjectURL(job.blob) : null;
+  thumb.src = thumbObjectUrl || job.thumbDataUrl || '';
   show('thumb', Boolean(thumb.src));
 }
 
@@ -197,10 +274,9 @@ async function failJob(job, message) {
   stopPolling();
   try {
     await deleteJob(job.id);
-  } catch (e) {
-    console.error('Suppression de la photo en attente impossible :', e);
-    showError('La demande a échoué et sa copie locale n’a pas pu être supprimée. ' +
-              'Supprime les données du site depuis les paramètres du navigateur.');
+  } catch (error) {
+    console.error('Could not delete failed local photo:', error);
+    showError(t('errorDeletePending'));
     showStep('pick');
     return;
   }
@@ -211,182 +287,288 @@ async function failJob(job, message) {
   showStep('pick');
 }
 
-async function showResult(result) {
-  stopPolling();
-  if (activeJob) {
-    try {
-      await deleteJob(activeJob.id);
-    } catch (e) {
-      console.error('Suppression de la photo locale après résultat impossible :', e);
-      showError('Résultat reçu, mais la copie locale n’a pas pu être supprimée. ' +
-                'Supprime les données du site depuis les paramètres du navigateur.');
-    }
-  }
-  activeJob = null;
-  clearId();
-  clearThumb();
-  const thumb = $('thumb');
-  if (thumb.src.startsWith('blob:')) URL.revokeObjectURL(thumb.src);
-  thumb.removeAttribute('src');
-  show('thumb', false);
-  const box = $('result-content');
-  box.replaceChildren();
-
-  const r = result || {};
-  show('mock-banner', typeof r.status === 'string' && r.status.toUpperCase().includes('MOCK'));
-  if (r.status === 'error') {
-    showError(r.error || 'L’analyse n’a pas abouti. Montrez l’ordonnance au pharmacien.');
-    showStep('result');
-    return;
-  }
-
-  const wrap = el('div', 'result');
-
-  const drugs = Array.isArray(r.detected_drugs) ? r.detected_drugs : [];
-  const uncertain = Array.isArray(r.uncertain) ? r.uncertain : [];
-  wrap.appendChild(el('h3', null, 'Lectures estimées par le modèle (à confirmer)'));
-  if (drugs.length === 0 && uncertain.length === 0) {
-    wrap.appendChild(el('p', null, 'Aucun médicament n\'a pu être lu avec certitude. ' +
-                                   'Montrez l\'ordonnance au pharmacien.'));
-  }
-  if (drugs.length > 0) {
-    const ul = el('ul');
-    drugs.forEach((d) => {
-      const label = [d.name, d.dosage].filter(Boolean).join(' - ');
-      ul.appendChild(el('li', null, label));
-    });
-    wrap.appendChild(ul);
-    wrap.appendChild(el('p', null, 'Comparez avec l\'ordonnance papier : si un nom ne correspond pas, ' +
-                                   'ne vous fiez pas à ce résultat.'));
-  }
-
-  if (uncertain.length > 0) {
-    wrap.appendChild(el('h3', null, 'À vérifier avec un pharmacien'));
-    const ul = el('ul');
-    uncertain.forEach((d) => {
-      const label = [d.name, d.dosage, d.frequency, d.duration].filter(Boolean).join(' - ');
-      ul.appendChild(el('li', null, label || 'Médicament illisible'));
-    });
-    wrap.appendChild(ul);
-    wrap.appendChild(el('p', null, 'Ces médicaments incertains ne sont pas inclus dans la vérification des interactions.'));
-  }
-
-  const interactionChecks = Array.isArray(r.interactions) ? r.interactions : [];
-  wrap.appendChild(el('h3', null, 'Interactions médicamenteuses'));
-  if (interactionChecks.length === 0) {
-    wrap.appendChild(el('p', null, 'Interaction non vérifiée. La base ne permet pas de confirmer ' +
-                                   'les interactions ; l’absence d’alerte ne signifie pas absence de risque.'));
-  } else {
-    const list = el('ul');
-    interactionChecks.forEach((check) => {
-      if (check.status === 'verified') {
-        const source = [check.source, check.verified_on].filter(Boolean).join(' — ');
-        list.appendChild(el('li', null,
-          `${check.drug_a} + ${check.drug_b} : interaction documentée (${check.severity}) — ${source}`));
-      } else {
-        list.appendChild(el('li', null,
-          `${check.drug_a || 'Médicament inconnu'} + ${check.drug_b || 'médicament inconnu'} : interaction non vérifiée.`));
-      }
-    });
-    wrap.appendChild(list);
-    if (interactionChecks.some((check) => check.status === 'not_verified')) {
-      wrap.appendChild(el('p', null, 'La base est limitée : l’absence d’alerte ne signifie pas absence de risque.'));
-    }
-  }
-
-  const hasVerifiedAlert = interactionChecks.some((check) => check.status === 'verified');
-  const expl = hasVerifiedAlert && r.explanations && typeof r.explanations === 'object'
-    ? r.explanations
-    : {};
-  const langs = Object.keys(expl);
-  if (langs.length > 0) {
-    wrap.appendChild(el('h3', null, 'Explications'));
-    langs.forEach((code) => {
-      const block = el('div', 'lang');
-      block.appendChild(el('strong', null, LANG_LABELS[code] || code));
-      block.appendChild(el('span', null, String(expl[code])));
-      wrap.appendChild(block);
-    });
-    wrap.appendChild(el('p', null, 'Traduction automatique, à vérifier. Ne remplace pas un avis médical.'));
-  }
-
-  box.appendChild(wrap);
-  showStep('result');
-}
-
-function startPolling(job) {
-  stopPolling();
-  const tick = async () => {
-    try {
-      if (!job.relayId) {
-        if (!navigator.onLine) {
-          setProgress('offline');
-          pollTimer = setTimeout(tick, 5000);
-          return;
-        }
-        const upload = await fetchTimeout(`${RELAY}/upload`, {
-          method: 'POST',
-          headers: relayHeaders({ 'Content-Type': 'image/jpeg' }),
-          body: job.blob,
-        }, 30000);
-        if (upload.status === 400 || upload.status === 413) {
-          let reason = `Le relais a refusé la photo (code ${upload.status}).`;
-          try { const data = await upload.json(); if (data.error) reason = data.error; } catch (e) { /* réponse non JSON */ }
-          await failJob(job, reason);
-          return;
-        }
-        if (!upload.ok) throw new Error(`upload HTTP ${upload.status}`);
-        const data = await upload.json();
-        if (typeof data.id !== 'string' || !data.id) throw new Error('identifiant du relais manquant');
-        job.relayId = data.id;
-        job.blob = null;
-        await saveJob(job);
-        saveId(job.relayId);
-      }
-
-      const response = await fetchTimeout(`${RELAY}/status/${encodeURIComponent(job.relayId)}`,
-                                          { headers: relayHeaders() }, 8000);
-      if (response.status === 404) {
-        await failJob(job, 'Cette ordonnance a expiré sur le relais. Renvoyez-la.');
-        return;
-      }
-      if (!response.ok) throw new Error(`status HTTP ${response.status}`);
-      const data = await response.json();
-      if (data.status === 'done') {
-        await showResult(data.result);
-        return;
-      }
-      setProgress('queued');
-    } catch (e) {
-      setProgress(navigator.onLine ? 'retry' : 'offline');
-    }
-    pollTimer = setTimeout(tick, job.relayId ? POLL_MS : 5000);
-  };
-  tick();
-}
-
-function el(tag, className, text) {
+function makeElement(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
 }
 
-const LANG_LABELS = { fr: 'Français', fon: 'Fon', en: 'English' };
+function addField(parent, label, value) {
+  if (value === undefined || value === null || String(value).trim() === '') return;
+  const row = makeElement('div', null);
+  const name = makeElement('strong', null, `${label}: `);
+  row.append(name, document.createTextNode(String(value)));
+  parent.appendChild(row);
+}
+
+function safeSourceLink(sourceUrl, title) {
+  if (typeof sourceUrl !== 'string') return null;
+  try {
+    const url = new URL(sourceUrl);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    const link = makeElement('a', 'source-link', title || sourceUrl);
+    link.href = url.href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    return link;
+  } catch (error) {
+    return null;
+  }
+}
+
+function renderResult(result, isSample = false) {
+  const box = $('result-content');
+  box.replaceChildren();
+  const data = result && typeof result === 'object' ? result : {};
+  show('sample-banner', isSample);
+  $('sample-banner').textContent = t('sampleBanner');
+  show('mock-banner', !isSample &&
+    typeof data.status === 'string' && data.status.toUpperCase().includes('MOCK'));
+  $('mock-banner').textContent = t('mockBanner');
+  const interactions = Array.isArray(data.interactions) ? data.interactions : [];
+  const verified = interactions.filter((item) => item && item.status === 'verified');
+  const unverifiedCount = interactions.filter((item) => item && item.status === 'not_verified').length;
+  const uncertain = Array.isArray(data.uncertain) ? data.uncertain : [];
+  const detected = Array.isArray(data.detected_drugs) ? data.detected_drugs : [];
+  const cards = makeElement('div', 'result');
+
+  if (data.status === 'error') {
+    cards.appendChild(makeElement('section', 'result-card result-card--plain',
+      data.error_code === 'daily_limit'
+        ? t('dailyLimitReached')
+        : data.error_code === 'analysis_limit_unavailable'
+          ? t('dailyLimitUnavailable')
+          : data.error || t('errorAnalysis')));
+    box.appendChild(cards);
+    return;
+  }
+
+  const interactionCard = makeElement(
+    'section',
+    `result-card ${verified.length ? 'result-card--verified' : 'result-card--plain'}`,
+  );
+  if (response.status === 401) {
+    requestDemoAccess();
+    return;
+  }
+  const interactionHeading = makeElement('h2');
+  interactionHeading.append(
+    makeElement('span', 'card-icon', verified.length ? '!' : 'i'),
+    makeElement('span', null, t('verifiedTitle')),
+  );
+  interactionCard.appendChild(interactionHeading);
+
+  if (verified.length) {
+    for (const interaction of verified) {
+      const item = makeElement('div', 'interaction-item');
+      const summary = language === 'fr'
+        ? interaction.summary_fr
+        : interaction.summary_en || interaction.summary_fr || interaction.text?.en || interaction.text?.fr;
+      item.appendChild(makeElement('p', null,
+        `${interaction.drug_a || ''} + ${interaction.drug_b || ''}`));
+      if (summary) item.appendChild(makeElement('p', null, summary));
+      item.appendChild(makeElement('p', null, t('severity', { severity: interaction.severity || '—' })));
+      const source = safeSourceLink(
+        interaction.source_url || interaction.source?.url,
+        interaction.source?.title || interaction.source || t('source'),
+      );
+      if (source) item.appendChild(source);
+
+      const fonExplanation = typeof interaction.summary_fon === 'string' &&
+        interaction.summary_fon.trim();
+      if (language === 'fon' && fonExplanation) {
+        item.appendChild(makeElement('strong', null, t('explanation')));
+        item.appendChild(makeElement('p', null, fonExplanation));
+        item.appendChild(makeElement('p', 'lang-note', t('fonDisclaimer')));
+      } else if (language === 'fon' && interaction.summary_fon_status === 'unavailable') {
+        item.appendChild(makeElement('p', null, t('fonUnavailable')));
+      }
+      interactionCard.appendChild(item);
+    }
+  } else if (unverifiedCount > 0) {
+    interactionCard.appendChild(makeElement('p', null,
+      t('notVerifiedSummary', { count: unverifiedCount })));
+  } else {
+    interactionCard.appendChild(makeElement('p', null, t('noPairs')));
+  }
+
+  if (interactions.length && unverifiedCount > 0 && verified.length > 0) {
+    interactionCard.appendChild(makeElement('p', null,
+      t('notVerifiedSummary', { count: unverifiedCount })));
+  }
+  cards.appendChild(interactionCard);
+
+  const uncertainCard = makeElement('section', 'result-card result-card--uncertain');
+  const uncertainHeading = makeElement('h2');
+  uncertainHeading.append(
+    makeElement('span', 'card-icon', '?'),
+    makeElement('span', null, t('uncertainTitle')),
+  );
+  uncertainCard.appendChild(uncertainHeading);
+  if (data.status === 'not_a_prescription') {
+    uncertainCard.appendChild(makeElement('p', null, t('notPrescription')));
+  }
+  if (data.image_quality && data.image_quality !== 'good') {
+    uncertainCard.appendChild(makeElement('p', null,
+      t('uncertainImage', { quality: data.image_quality })));
+  }
+  if (typeof data.notes === 'string' && data.notes.trim()) {
+    uncertainCard.appendChild(makeElement('p', null, t('uncertainNotes', { notes: data.notes })));
+  }
+  if (uncertain.length) {
+    const list = makeElement('ul', 'drug-list');
+    for (const drug of uncertain) {
+      const item = makeElement('li', 'drug-item');
+      item.appendChild(makeElement('strong', null, drug && drug.name || t('noName')));
+      addField(item, t('fieldDosage'), drug && drug.dosage);
+      addField(item, t('fieldFrequency'), drug && drug.frequency);
+      addField(item, t('fieldDuration'), drug && drug.duration);
+      list.appendChild(item);
+    }
+    uncertainCard.appendChild(list);
+    uncertainCard.appendChild(makeElement('p', null, t('unverifiedMedicines')));
+  } else {
+    uncertainCard.appendChild(makeElement('p', null, t('uncertainEmpty')));
+  }
+  cards.appendChild(uncertainCard);
+
+  const readCard = makeElement('section', 'result-card result-card--read');
+  const readHeading = makeElement('h2');
+  readHeading.append(
+    makeElement('span', 'card-icon', '✓'),
+    makeElement('span', null, t('detectedTitle')),
+  );
+  readCard.appendChild(readHeading);
+  if (detected.length) {
+    const list = makeElement('ul', 'drug-list');
+    for (const drug of detected) {
+      const item = makeElement('li', 'drug-item');
+      item.appendChild(makeElement('strong', null, drug && drug.name || t('noName')));
+      addField(item, t('fieldDosage'), drug && drug.dosage);
+      addField(item, t('fieldFrequency'), drug && drug.frequency);
+      addField(item, t('fieldDuration'), drug && drug.duration);
+      list.appendChild(item);
+    }
+    readCard.appendChild(list);
+  } else {
+    readCard.appendChild(makeElement('p', null, t('detectedEmpty')));
+  }
+  cards.appendChild(readCard);
+  box.appendChild(cards);
+
+}
+
+async function showResult(result) {
+  stopPolling();
+  if (activeJob) {
+    try {
+      await deleteJob(activeJob.id);
+    } catch (error) {
+      console.error('Could not delete local photo after result:', error);
+      showError(t('errorDeleteResult'));
+    }
+  }
+  activeJob = null;
+  clearId();
+  clearThumb();
+  if (thumbObjectUrl) URL.revokeObjectURL(thumbObjectUrl);
+  thumbObjectUrl = null;
+  $('thumb').removeAttribute('src');
+  show('thumb', false);
+  latestResult = result;
+  latestResultIsSample = false;
+  renderResult(result);
+  showStep('result');
+}
+
+function startPolling(job) {
+  stopPolling();
+  let retryDelay = POLL_MS;
+  const tick = async () => {
+    try {
+      if (!job.relayId) {
+        if (!navigator.onLine) {
+          setProgress('offline');
+          pollTimer = setTimeout(tick, Math.min(30000, retryDelay));
+          retryDelay = Math.min(30000, retryDelay * 2);
+          return;
+        }
+        setProgress('sending');
+        const upload = await fetchTimeout(`${RELAY}/upload`, {
+          method: 'POST',
+          headers: relayHeaders({ 'Content-Type': 'image/jpeg' }),
+          body: job.blob,
+        }, 30000);
+        if (upload.status === 401) {
+          requestDemoAccess();
+          return;
+        }
+        if (upload.status === 429) {
+          const seconds = Math.max(1, Number(upload.headers.get('Retry-After')) || 60);
+          $('status-title').textContent = t('retry');
+          $('status-detail').textContent = t('rateLimitWait', { seconds });
+          pollTimer = setTimeout(tick, seconds * 1000);
+          return;
+        }
+        if (upload.status === 400 || upload.status === 413) {
+          let reason = t('errorRelay', { status: upload.status });
+          try {
+            const data = await upload.json();
+            if (data.error) reason = data.error;
+          } catch (error) { /* response may not be JSON */ }
+          await failJob(job, reason);
+          return;
+        }
+        if (!upload.ok) throw new Error(`Upload HTTP ${upload.status}`);
+        const data = await upload.json();
+        if (typeof data.id !== 'string' || !data.id) throw new Error(t('errorRelayId'));
+        job.relayId = data.id;
+        job.blob = null;
+        await saveJob(job);
+        saveId(job.relayId);
+      }
+
+      const response = await fetchTimeout(
+        `${RELAY}/status/${encodeURIComponent(job.relayId)}`,
+        { headers: relayHeaders() },
+        8000,
+      );
+      if (response.status === 404) {
+        await failJob(job, t('errorExpired'));
+        return;
+      }
+      if (!response.ok) throw new Error(`Status HTTP ${response.status}`);
+      const data = await response.json();
+      if (data.status === 'done') {
+        await showResult(data.result);
+        return;
+      }
+      retryDelay = POLL_MS;
+      setProgress('queued');
+    } catch (error) {
+      setProgress(navigator.onLine ? 'retry' : 'offline');
+      retryDelay = Math.min(30000, retryDelay * 2);
+    }
+    pollTimer = setTimeout(tick, retryDelay);
+  };
+  tick();
+}
 
 async function handleFile(file) {
   if (!file) return;
   show('error', false);
   if (activeJob) {
-    showError('Une ordonnance est déjà en cours. Attendez son résultat avant d’en envoyer une autre.');
+    showError(t('errorActiveJob'));
     return;
   }
 
-  let blob, thumbDataUrl;
+  let blob;
+  let thumbDataUrl;
   try {
     ({ blob, thumbDataUrl } = await prepareImage(file));
-  } catch (e) {
-    showError('Impossible de lire cette image. Essayez avec une autre photo.');
+  } catch (error) {
+    showError(t('errorImage'));
     showStep('pick');
     return;
   }
@@ -396,18 +578,50 @@ async function handleFile(file) {
   activeJob = { id, blob, thumbDataUrl, relayId: null, createdAt: Date.now() };
   try {
     await saveJob(activeJob);
-  } catch (e) {
-    console.error('Stockage local de la photo impossible :', e);
+  } catch (error) {
+    console.error('Could not save photo locally:', error);
     activeJob = null;
-    showError('Impossible de garder la photo sur ce téléphone. Vérifiez l’espace disponible et réessayez.');
+    showError(t('errorLocalStorage'));
     showStep('pick');
     return;
   }
 
+  saveThumb(thumbDataUrl);
   showJobThumb(activeJob);
   showStep('progress');
   setProgress(navigator.onLine ? 'sending' : 'offline');
   startPolling(activeJob);
+}
+
+async function handleSample() {
+  if (activeJob) {
+    showError(t('errorActiveJob'));
+    return;
+  }
+  show('error', false);
+  try {
+    const [imageResponse, resultResponse] = await Promise.all([
+      fetch('/samples/sample-prescription.png'),
+      fetch('/samples/sample-result.json'),
+    ]);
+    if (!imageResponse.ok || !resultResponse.ok) throw new Error(t('errorNoSample'));
+    const [imageBlob, result] = await Promise.all([
+      imageResponse.blob(),
+      resultResponse.json(),
+    ]);
+    latestResult = result;
+    latestResultIsSample = true;
+    if (thumbObjectUrl) URL.revokeObjectURL(thumbObjectUrl);
+    thumbObjectUrl = URL.createObjectURL(imageBlob);
+    $('thumb').src = thumbObjectUrl;
+    show('thumb', true);
+    renderResult(result, true);
+    showStep('result');
+  } catch (error) {
+    console.error('Could not load the precomputed synthetic sample:', error);
+    showError(t('errorNoSample'));
+    showStep('pick');
+  }
 }
 
 async function resetAll() {
@@ -415,40 +629,25 @@ async function resetAll() {
   if (activeJob) {
     try {
       await deleteJob(activeJob.id);
-    } catch (e) {
-      console.error('Suppression de la photo locale impossible :', e);
-      showError('Impossible de supprimer la photo en attente du téléphone.');
+    } catch (error) {
+      console.error('Could not delete pending local photo:', error);
+      showError(t('errorLocalDelete'));
       return;
     }
     activeJob = null;
   }
   clearId();
   clearThumb();
+  latestResult = null;
+  latestResultIsSample = false;
   show('error', false);
-  const thumb = $('thumb');
-  if (thumb.src.startsWith('blob:')) URL.revokeObjectURL(thumb.src);
-  thumb.removeAttribute('src');
+  if (thumbObjectUrl) URL.revokeObjectURL(thumbObjectUrl);
+  thumbObjectUrl = null;
+  $('thumb').removeAttribute('src');
   show('thumb', false);
   $('cam').value = '';
   $('gal').value = '';
   showStep('pick');
-}
-
-$('cam').addEventListener('change', (e) => handleFile(e.target.files[0]));
-$('gal').addEventListener('change', (e) => handleFile(e.target.files[0]));
-$('new-btn').addEventListener('click', resetAll);
-
-checkRelay();
-setInterval(checkRelay, 4000);
-
-window.addEventListener('online', () => {
-  checkRelay();
-  if (activeJob) startPolling(activeJob);
-});
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/service-worker.js')
-    .catch((e) => console.error('Installation du cache hors ligne impossible :', e));
 }
 
 async function resumePendingJob() {
@@ -471,16 +670,74 @@ async function resumePendingJob() {
       }
     }
     if (jobs.length === 0) return;
-    jobs.sort((a, b) => a.createdAt - b.createdAt);
+    jobs.sort((first, second) => first.createdAt - second.createdAt);
     activeJob = jobs[0];
     showJobThumb(activeJob);
     showStep('progress');
     setProgress(navigator.onLine ? 'resume' : 'offline');
     startPolling(activeJob);
-  } catch (e) {
-    console.error('Reprise de la file locale impossible :', e);
-    showError('Impossible de lire la photo gardée sur ce téléphone. Ne fermez pas cette page et réessayez.');
+  } catch (error) {
+    console.error('Could not resume the local queue:', error);
+    showError(t('errorLocalRead'));
   }
 }
 
-resumePendingJob();
+async function initialize() {
+  $('debug-relay').hidden = !DEBUG_RELAY;
+  try {
+    demoAccessCode = sessionStorage.getItem('pharmaclear:demo-access-code') || '';
+  } catch (error) { /* demo code is session-scoped */ }
+  const savedLanguage = (() => {
+    try { return localStorage.getItem('pharmaclear:language'); } catch (error) { return null; }
+  })();
+  try {
+    const response = await fetch('/i18n/en.json');
+    if (!response.ok) throw new Error(`Could not load English translations (HTTP ${response.status})`);
+    englishTranslations = await response.json();
+    await setLanguage(LANGUAGES.includes(savedLanguage) ? savedLanguage : 'en');
+  } catch (error) {
+    console.error('Could not initialize translations:', error);
+    $('error').textContent = error.message;
+    show('error', true);
+  }
+
+  try {
+    const access = await checkDemoAccess(demoAccessCode);
+    show('access-panel', access.required && !access.authorized);
+  } catch (error) {
+    console.error('Could not check demo access requirement:', error);
+  }
+  $('cam').addEventListener('change', (event) => handleFile(event.target.files[0]));
+  $('gal').addEventListener('change', (event) => handleFile(event.target.files[0]));
+  $('new-btn').addEventListener('click', resetAll);
+  $('sample-btn').addEventListener('click', handleSample);
+  $('access-submit').addEventListener('click', submitDemoAccess);
+  $('access-code').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') submitDemoAccess();
+  });
+  $('language-select').addEventListener('change', async (event) => {
+    try {
+      await setLanguage(event.target.value);
+    } catch (error) {
+      console.error('Could not switch language:', error);
+      event.target.value = language;
+      showError(t('errorUnexpected'));
+    }
+  });
+  window.addEventListener('online', () => {
+    updateNetworkStatus();
+    checkRelay();
+    if (activeJob) startPolling(activeJob);
+  });
+  window.addEventListener('offline', updateNetworkStatus);
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/service-worker.js')
+      .catch((error) => console.error('Could not register the offline cache:', error));
+  }
+  updateNetworkStatus();
+  checkRelay();
+  if (DEBUG_RELAY) setInterval(checkRelay, 4000);
+  await resumePendingJob();
+}
+
+initialize();

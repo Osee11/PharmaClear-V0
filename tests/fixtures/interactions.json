@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "version": "TEST ONLY",
+    "last_reviewed": "2026-10-29",
+    "reviewed_by_pharmacist": true
+  },
+  "aliases": [
+    {
+      "brand": "Test Brand Alpha",
+      "generic": "Épreuve Témoin A",
+      "source": {
+        "title": "TEST ONLY alias fixture",
+        "url": "https://example.invalid/test-alias",
+        "accessed": "2026-10-29"
+      }
+    }
+  ],
+  "pairs": [
+    {
+      "a": "Épreuve Témoin A",
+      "b": "Substance Épreuve B",
+      "severity": "caution",
+      "summary_en": "TEST ONLY: synthetic fixture summary.",
+      "summary_fr": "TEST ONLY : résumé de fixture synthétique.",
+      "source": {
+        "title": "TEST ONLY interaction fixture",
+        "url": "https://example.invalid/test-interaction",
+        "accessed": "2026-10-29"
+      }
+    }
+  ]
+}

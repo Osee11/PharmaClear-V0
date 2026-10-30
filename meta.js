@@ -101,6 +101,54 @@ function extractText(data) {
   return out;
 }
 
+async function translateInteractionSummaryToFon(summaryEn) {
+  if (typeof summaryEn !== 'string' || !summaryEn.trim() || summaryEn.length > 1000) {
+    throw new TypeError('A verified English interaction summary is required');
+  }
+  const body = {
+    model: CONFIG.model,
+    reasoning: { effort: CONFIG.effort },
+    max_output_tokens: 500,
+    instructions: 'Translate the supplied English medical interaction summary into Fon. ' +
+      'Translate only: do not add, remove, infer, explain, or give advice. ' +
+      'Return only the translation, with no labels or commentary.',
+    input: [{
+      role: 'user',
+      content: [{ type: 'input_text', text: summaryEn.trim() }],
+    }],
+  };
+
+  let response;
+  try {
+    response = await fetch(CONFIG.apiUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${CONFIG.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(CONFIG.timeoutMs),
+    });
+  } catch (error) {
+    throw new UpstreamError(`Fon translation network error: ${error.message}`, true);
+  }
+  if (!response.ok) {
+    const text = (await response.text().catch(() => '')).slice(0, 300);
+    const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+    throw new UpstreamError(`Fon translation API HTTP ${response.status}: ${text}`, retryable);
+  }
+
+  let data;
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new UpstreamError('Fon translation API returned invalid JSON', true);
+  }
+  const translation = extractText(data).replace(/\s+/g, ' ').trim();
+  if (!translation) throw new ModelOutputError('Fon translation was empty');
+  return translation.slice(0, 1000);
+}
+
 // Extrait l'objet JSON même si le modèle l'entoure de ```json ... ```
 function parseModelJson(text) {
   if (!text) return null;
@@ -171,4 +219,10 @@ async function analyzePrescription(buffer, mime) {
   throw new ModelOutputError('le modèle n\'a pas renvoyé de JSON exploitable');
 }
 
-module.exports = { analyzePrescription, UpstreamError, ModelOutputError, CONFIG };
+module.exports = {
+  analyzePrescription,
+  translateInteractionSummaryToFon,
+  UpstreamError,
+  ModelOutputError,
+  CONFIG,
+};

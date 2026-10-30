@@ -17,6 +17,7 @@
  *   NODE_URL      URL du serveur Node   (défaut http://127.0.0.1:3000/api/analyze)
  *   PHARMA_TOKEN  si défini, toutes les requêtes doivent envoyer l'en-tête
  *                 "X-Token: <valeur>" (sauf /health et OPTIONS)
+ *   PHARMA_NODE_TOKEN  secret serveur-à-serveur ajouté aux appels vers Node
  *   PHARMA_BIND   adresse d'écoute (défaut 0.0.0.0 ; mettre 127.0.0.1 pour
  *                 n'accepter que ce PC)
  *
@@ -81,6 +82,20 @@
 static volatile sig_atomic_t g_running = 1;
 static const char *g_node_url = "http://127.0.0.1:3000/api/analyze";
 static const char *g_token = NULL;
+static const char *g_node_token = NULL;
+
+static int valid_node_token(const char *token)
+{
+    if (!token) return 0;
+    size_t len = strlen(token);
+    if (len < 16 || len > 128) return 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)token[i];
+        if (!isalnum(c) && c != '.' && c != '_' && c != '~' && c != '-')
+            return 0;
+    }
+    return 1;
+}
 
 static void log_msg(const char *fmt, ...)
 {
@@ -572,6 +587,15 @@ static int forward_one(const char *name)
         }
         char tmo[16];
         snprintf(tmo, sizeof tmo, "%d", CURL_TIMEOUT_S);
+        if (g_node_token) {
+            char node_header[192];
+            snprintf(node_header, sizeof node_header,
+                     "X-Internal-Relay-Token: %s", g_node_token);
+            execlp("curl", "curl", "-sS", "-f", "--max-time", tmo,
+                   "-H", node_header, "-o", tmp, "-F", form,
+                   g_node_url, (char *)NULL);
+            _exit(127);
+        }
         execlp("curl", "curl", "-sS", "-f", "--max-time", tmo,
                "-o", tmp, "-F", form, g_node_url, (char *)NULL);
         _exit(127);
@@ -657,6 +681,13 @@ int main(int argc, char **argv)
     if (getenv("NODE_URL") && *getenv("NODE_URL")) g_node_url = getenv("NODE_URL");
     if (getenv("PHARMA_TOKEN") && *getenv("PHARMA_TOKEN"))
         g_token = getenv("PHARMA_TOKEN");
+    if (getenv("PHARMA_NODE_TOKEN") && *getenv("PHARMA_NODE_TOKEN")) {
+        if (!valid_node_token(getenv("PHARMA_NODE_TOKEN"))) {
+            fprintf(stderr, "PHARMA_NODE_TOKEN doit contenir 16 à 128 caractères URL-safe.\n");
+            return 1;
+        }
+        g_node_token = getenv("PHARMA_NODE_TOKEN");
+    }
     const char *bind_addr = getenv("PHARMA_BIND");
     if (!bind_addr || !*bind_addr) bind_addr = "0.0.0.0";
 

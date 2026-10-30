@@ -7,7 +7,7 @@ const { analyzePrescription, CONFIG } = require('./meta');
 
 async function main() {
   const file = process.argv[2];
-  if (!file) { console.error('Usage : node tools/lire.js photo.jpg'); process.exit(1); }
+  if (!file) { console.error('Usage: node lire.js path/to/synthetic-prescription.png'); process.exit(1); }
   if (!CONFIG.apiKey) { console.error('MODEL_API_KEY ou META_API_KEY absente : renseigne le fichier .env'); process.exit(1); }
 
   const ext = path.extname(file).toLowerCase();

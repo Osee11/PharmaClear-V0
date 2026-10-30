@@ -1,4 +1,9 @@
 {
-  "schema_version": 1,
-  "interactions": []
+  "meta": {
+    "version": "0.1",
+    "last_reviewed": null,
+    "reviewed_by_pharmacist": false
+  },
+  "aliases": [],
+  "pairs": []
 }

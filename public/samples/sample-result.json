@@ -1,0 +1,7 @@
+{
+  "status": "not_a_prescription",
+  "image_quality": "good",
+  "detected_drugs": [],
+  "uncertain": [],
+  "model": "muse-wonder-1.0"
+}

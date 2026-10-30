@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'pharmaclear-static-v1';
+const CACHE_NAME = 'pharmaclear-static-v4';
 const APP_FILES = [
   '/',
   '/index.html',
@@ -8,6 +8,11 @@ const APP_FILES = [
   '/style.css',
   '/manifest.webmanifest',
   '/icon.svg',
+  '/i18n/en.json',
+  '/i18n/fr.json',
+  '/i18n/fon.json',
+  '/samples/sample-prescription.png',
+  '/samples/sample-result.json',
 ];
 
 self.addEventListener('install', (event) => {
@@ -32,18 +37,28 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith((async () => {
-    const cached = await caches.match(request);
-    if (cached) return cached;
+  const isNetworkFirst = url.pathname === '/' ||
+    ['/index.html', '/app.js', '/style.css'].includes(url.pathname) ||
+    url.pathname.startsWith('/i18n/');
+  const isOfflineAsset = ['/manifest.webmanifest', '/icon.svg'].includes(url.pathname) ||
+    url.pathname.startsWith('/samples/');
+  if (!isNetworkFirst && !isOfflineAsset) return;
 
+  event.respondWith((async () => {
+    if (isOfflineAsset) {
+      const cached = await caches.match(request);
+      if (cached) return cached;
+    }
     try {
       const response = await fetch(request);
-      if (response.ok && url.pathname === '/') {
+      if (response.ok) {
         const cache = await caches.open(CACHE_NAME);
-        await cache.put('/', response.clone());
+        await cache.put(request, response.clone());
       }
       return response;
     } catch (error) {
+      const cached = await caches.match(request);
+      if (cached) return cached;
       if (request.mode === 'navigate') {
         const fallback = await caches.match('/index.html');
         if (fallback) return fallback;
