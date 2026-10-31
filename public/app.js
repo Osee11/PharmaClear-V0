@@ -178,17 +178,27 @@ function showStep(step) {
   show('step-pick', step === 'pick');
   show('step-progress', step === 'progress');
   show('step-result', step === 'result');
+  show('new-btn', step === 'result');
 }
 
 function updateNetworkStatus() {
+  const status = $('network-status');
+  const label = $('network-label');
   if (!navigator.onLine) {
-    $('network-status').textContent = t('networkOffline');
+    label.textContent = t('networkOffline');
+    status.classList.remove('is-online');
+    status.classList.add('is-offline');
   } else if (backendReachable === false) {
-    $('network-status').textContent = t('networkServerUnavailable');
+    label.textContent = t('networkServerUnavailable');
+    status.classList.remove('is-online');
+    status.classList.add('is-offline');
   } else if (backendReachable === null) {
-    $('network-status').textContent = t('networkChecking');
+    label.textContent = t('networkChecking');
+    status.classList.remove('is-online', 'is-offline');
   } else {
-    $('network-status').textContent = t('networkOnline');
+    label.textContent = t('networkOnline');
+    status.classList.remove('is-offline');
+    status.classList.add('is-online');
   }
 }
 
@@ -261,20 +271,36 @@ async function prepareImage(file) {
 function setProgress(state) {
   const title = $('status-title');
   const detail = $('status-detail');
-  $('spinner').classList.remove('stopped');
-  if (state === 'sending' || state === 'resume') {
-    title.textContent = state === 'resume' ? t('resume') : t('reading');
-    detail.textContent = t('checkingInteractions');
+  let currentStep = 0;
+  if (state === 'sending') {
+    title.textContent = t('sending');
+    detail.textContent = t('reading');
+    currentStep = 0;
+  } else if (state === 'checking') {
+    title.textContent = t('checkingInteractions');
+    detail.textContent = '';
+    currentStep = 2;
+  } else if (state === 'resume') {
+    title.textContent = t('resume');
+    detail.textContent = t('reading');
+    currentStep = 1;
   } else if (state === 'queued') {
     title.textContent = t('reading');
     detail.textContent = t('queuedDetail');
+    currentStep = 1;
   } else if (state === 'retry') {
     title.textContent = t('retry');
     detail.textContent = t('retryDetail');
+    currentStep = activeJob && activeJob.relayId ? 1 : 0;
   } else if (state === 'offline') {
     title.textContent = t('offlineProgress');
     detail.textContent = t('offlineDetail');
+    currentStep = activeJob && activeJob.relayId ? 1 : 0;
   }
+  document.querySelectorAll('[data-progress-step]').forEach((item, index) => {
+    item.classList.toggle('is-current', index === currentStep);
+    item.classList.toggle('is-complete', index < currentStep);
+  });
 }
 
 function stopPolling() {
@@ -355,8 +381,78 @@ function renderResult(result, isSample = false) {
   const detected = Array.isArray(data.detected_drugs) ? data.detected_drugs : [];
   const cards = makeElement('div', 'result');
 
+  const icon = (name, className = 'icon') => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', className);
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', `#icon-${name}`);
+    svg.appendChild(use);
+    return svg;
+  };
+  const heading = (symbol, text) => {
+    const node = makeElement('h2');
+    node.append(icon(symbol), makeElement('span', null, text));
+    return node;
+  };
+  const pill = (text, className = 'data-pill') => makeElement('span', className, text);
+  const addDrug = (list, drug, isUncertain) => {
+    const item = makeElement('li', 'drug-item');
+    const name = makeElement('div', 'drug-name');
+    name.append(icon('pill'), makeElement('strong', null,
+      drug && typeof drug.name === 'string' && drug.name.trim()
+        ? drug.name
+        : t('noName')));
+    item.appendChild(name);
+    const pills = makeElement('div', 'drug-pills');
+    for (const [field, labelKey] of [
+      ['dosage', 'fieldDosage'],
+      ['frequency', 'fieldFrequency'],
+      ['duration', 'fieldDuration'],
+    ]) {
+      const value = drug && drug[field];
+      if (value !== undefined && value !== null && String(value).trim()) {
+        pills.appendChild(pill(`${t(labelKey)}: ${String(value)}`));
+      } else if (isUncertain) {
+        pills.appendChild(pill(t(`${labelKey}Missing`), 'data-pill data-pill--missing'));
+      }
+    }
+    if (pills.childElementCount) item.appendChild(pills);
+
+    if (isUncertain && Number.isFinite(drug && drug.confidence)) {
+      const confidence = Number(drug.confidence);
+      const level = confidence < 0.4 ? 'low' : confidence < 0.7 ? 'medium' : 'high';
+      const row = makeElement('div', 'confidence-row');
+      row.append(
+        makeElement('span', 'confidence-label', t('confidenceLabel')),
+        makeElement('span', `confidence-badge confidence-badge--${level}`, t(`confidence${level[0].toUpperCase()}${level.slice(1)}`)),
+      );
+      item.appendChild(row);
+    }
+    list.appendChild(item);
+  };
+
+  const summary = makeElement('section', 'result-summary');
+  summary.appendChild(makeElement('h1', null, t('resultSummary')));
+  const counts = makeElement('div', 'summary-counts');
+  for (const [className, count, label] of [
+    ['summary-count--alert', verified.length, 'alertCount'],
+    ['summary-count--uncertain', uncertain.length, 'uncertainCount'],
+    ['summary-count--read', detected.length, 'readCount'],
+  ]) {
+    const counter = makeElement('div', `summary-count ${className}`);
+    counter.append(
+      makeElement('strong', null, String(count)),
+      makeElement('span', null, t(label)),
+    );
+    counts.appendChild(counter);
+  }
+  summary.appendChild(counts);
+  cards.appendChild(summary);
+
   if (data.status === 'error') {
-    cards.appendChild(makeElement('section', 'result-card result-card--plain',
+    cards.appendChild(makeElement('section', 'result-card result-card--error',
       data.error_code === 'daily_limit'
         ? t('dailyLimitReached')
         : data.error_code === 'analysis_limit_unavailable'
@@ -366,115 +462,143 @@ function renderResult(result, isSample = false) {
     return;
   }
 
-  const interactionCard = makeElement(
-    'section',
-    `result-card ${verified.length ? 'result-card--verified' : 'result-card--plain'}`,
-  );
-  const interactionHeading = makeElement('h2');
-  interactionHeading.append(
-    makeElement('span', 'card-icon', verified.length ? '!' : 'i'),
-    makeElement('span', null, t('verifiedTitle')),
-  );
-  interactionCard.appendChild(interactionHeading);
-
   if (verified.length) {
+    const interactionCard = makeElement('section', 'result-card result-card--verified');
+    interactionCard.appendChild(heading('alert', t('verifiedTitle')));
     for (const interaction of verified) {
-      const item = makeElement('div', 'interaction-item');
-      const summary = language === 'fr'
-        ? interaction.summary_fr
-        : interaction.summary_en || interaction.summary_fr || interaction.text?.en || interaction.text?.fr;
-      item.appendChild(makeElement('p', null,
-        `${interaction.drug_a || ''} + ${interaction.drug_b || ''}`));
-      if (summary) item.appendChild(makeElement('p', null, summary));
-      item.appendChild(makeElement('p', null, t('severity', { severity: interaction.severity || '—' })));
+      const item = makeElement('article', 'interaction-entry');
+      const drugs = makeElement('div', 'interaction-drugs');
+      drugs.append(
+        pill(interaction.drug_a || t('noName'), 'drug-pill'),
+        makeElement('span', 'interaction-plus', '+'),
+        pill(interaction.drug_b || t('noName'), 'drug-pill'),
+      );
+      item.appendChild(drugs);
+      const meta = makeElement('div', 'interaction-meta');
+      const severityKey = {
+        avoid: 'severityAvoid',
+        caution: 'severityCaution',
+        monitor: 'severityMonitor',
+      }[interaction.severity];
+      meta.appendChild(makeElement('span', 'severity-badge',
+        t('severity', { severity: severityKey ? t(severityKey) : '—' })));
+      item.appendChild(meta);
+      if (interaction.review_status === 'unreviewed') {
+        const source = interaction.source || {};
+        const sourceName = language === 'fr'
+          ? source.display_name_fr || source.display_name_en || source.title || ''
+          : source.display_name_en || source.display_name || source.title || '';
+        const sourceDate = source.publication_date
+          ? new Intl.DateTimeFormat(language === 'fr' ? 'fr' : 'en', {
+            month: 'short',
+            year: 'numeric',
+            timeZone: 'UTC',
+          }).format(new Date(`${source.publication_date}-01T00:00:00Z`))
+          : source.accessed || '';
+        item.appendChild(makeElement('p', 'unreviewed-note',
+          t('unreviewedNote', { source: sourceName, date: sourceDate })));
+        if (language === 'fon') {
+          item.appendChild(makeElement('p', 'source-citation',
+            t('sourceCitation', { source: sourceName, date: sourceDate })));
+        }
+      }
+
+      const languageSelect = makeElement('select', 'explanation-picker');
+      languageSelect.setAttribute('aria-label', t('interactionLanguage'));
+      for (const [value, label] of [['en', 'EN'], ['fr', 'FR'], ['fon', 'Fon']]) {
+        const option = makeElement('option', null, label);
+        option.value = value;
+        languageSelect.appendChild(option);
+      }
+      languageSelect.value = language;
+      const explanation = makeElement('p', 'interaction-summary');
+      const provenance = makeElement('p', 'fon-provenance');
+      const renderExplanation = (selectedLanguage) => {
+        let text = '';
+        let origin = '';
+        if (selectedLanguage === 'fr') {
+          text = interaction.summary_fr || interaction.summary_en || '';
+        } else if (selectedLanguage === 'fon') {
+          if (typeof interaction.summary_fon_human === 'string' &&
+              interaction.summary_fon_human.trim()) {
+            text = interaction.summary_fon_human;
+            origin = t('fonSpeakerProvenance');
+          } else if (typeof interaction.summary_fon === 'string' &&
+              interaction.summary_fon.trim()) {
+            text = interaction.summary_fon;
+            origin = t('fonDisclaimer');
+          } else {
+            text = t('fonUnavailable');
+          }
+        } else {
+          text = interaction.summary_en || interaction.summary_fr || '';
+        }
+        explanation.textContent = text;
+        provenance.textContent = origin;
+        provenance.hidden = !origin;
+      };
+      renderExplanation(languageSelect.value);
+      languageSelect.addEventListener('change', () => renderExplanation(languageSelect.value));
+      item.append(languageSelect, explanation, provenance);
+
       const source = safeSourceLink(
         interaction.source_url || interaction.source?.url,
         interaction.source?.title || interaction.source || t('source'),
       );
-      if (source) item.appendChild(source);
-
-      const fonExplanation = typeof interaction.summary_fon === 'string' &&
-        interaction.summary_fon.trim();
-      if (language === 'fon' && fonExplanation) {
-        item.appendChild(makeElement('strong', null, t('explanation')));
-        item.appendChild(makeElement('p', null, fonExplanation));
-        item.appendChild(makeElement('p', 'lang-note', t('fonDisclaimer')));
-      } else if (language === 'fon' && interaction.summary_fon_status === 'unavailable') {
-        item.appendChild(makeElement('p', null, t('fonUnavailable')));
+      if (source) {
+        source.className = 'source-button';
+        source.prepend(icon('link'));
+        source.appendChild(icon('arrow'));
+        item.appendChild(source);
       }
       interactionCard.appendChild(item);
     }
-  } else if (unverifiedCount > 0) {
-    interactionCard.appendChild(makeElement('p', null,
-      t('notVerifiedSummary', { count: unverifiedCount })));
-  } else {
-    interactionCard.appendChild(makeElement('p', null, t('noPairs')));
+    cards.appendChild(interactionCard);
   }
 
-  if (interactions.length && unverifiedCount > 0 && verified.length > 0) {
-    interactionCard.appendChild(makeElement('p', null,
-      t('notVerifiedSummary', { count: unverifiedCount })));
-  }
-  cards.appendChild(interactionCard);
-
-  const uncertainCard = makeElement('section', 'result-card result-card--uncertain');
-  const uncertainHeading = makeElement('h2');
-  uncertainHeading.append(
-    makeElement('span', 'card-icon', '?'),
-    makeElement('span', null, t('uncertainTitle')),
-  );
-  uncertainCard.appendChild(uncertainHeading);
-  if (data.status === 'not_a_prescription') {
-    uncertainCard.appendChild(makeElement('p', null, t('notPrescription')));
-  }
-  if (data.image_quality && data.image_quality !== 'good') {
-    uncertainCard.appendChild(makeElement('p', null,
-      t('uncertainImage', { quality: data.image_quality })));
-  }
-  if (typeof data.notes === 'string' && data.notes.trim()) {
-    uncertainCard.appendChild(makeElement('p', null, t('uncertainNotes', { notes: data.notes })));
-  }
-  if (uncertain.length) {
-    const list = makeElement('ul', 'drug-list');
-    for (const drug of uncertain) {
-      const item = makeElement('li', 'drug-item');
-      item.appendChild(makeElement('strong', null, drug && drug.name || t('noName')));
-      addField(item, t('fieldDosage'), drug && drug.dosage);
-      addField(item, t('fieldFrequency'), drug && drug.frequency);
-      addField(item, t('fieldDuration'), drug && drug.duration);
-      list.appendChild(item);
+  const hasUncertainty = uncertain.length > 0 || data.status === 'not_a_prescription' ||
+    (data.image_quality && data.image_quality !== 'good') ||
+    (typeof data.notes === 'string' && data.notes.trim());
+  if (hasUncertainty) {
+    const uncertainCard = makeElement('section', 'result-card result-card--uncertain');
+    uncertainCard.appendChild(heading('question', t('uncertainTitle')));
+    if (data.status === 'not_a_prescription') {
+      uncertainCard.appendChild(makeElement('p', null, t('notPrescription')));
     }
-    uncertainCard.appendChild(list);
-    uncertainCard.appendChild(makeElement('p', null, t('unverifiedMedicines')));
-  } else {
-    uncertainCard.appendChild(makeElement('p', null, t('uncertainEmpty')));
+    if (data.image_quality && data.image_quality !== 'good') {
+      uncertainCard.appendChild(makeElement('p', null,
+        t('uncertainImage', { quality: data.image_quality })));
+    }
+    if (typeof data.notes === 'string' && data.notes.trim()) {
+      uncertainCard.appendChild(makeElement('p', null, t('uncertainNotes', { notes: data.notes })));
+    }
+    if (uncertain.length) {
+    const list = makeElement('ul', 'drug-list');
+      for (const drug of uncertain) addDrug(list, drug, true);
+      uncertainCard.appendChild(list);
+      uncertainCard.appendChild(makeElement('p', null, t('unverifiedMedicines')));
+    }
+    cards.appendChild(uncertainCard);
   }
-  cards.appendChild(uncertainCard);
 
-  const readCard = makeElement('section', 'result-card result-card--read');
-  const readHeading = makeElement('h2');
-  readHeading.append(
-    makeElement('span', 'card-icon', '✓'),
-    makeElement('span', null, t('detectedTitle')),
-  );
-  readCard.appendChild(readHeading);
   if (detected.length) {
+    const readCard = makeElement('section', 'result-card result-card--read');
+    readCard.appendChild(heading('check', t('detectedTitle')));
     const list = makeElement('ul', 'drug-list');
-    for (const drug of detected) {
-      const item = makeElement('li', 'drug-item');
-      item.appendChild(makeElement('strong', null, drug && drug.name || t('noName')));
-      addField(item, t('fieldDosage'), drug && drug.dosage);
-      addField(item, t('fieldFrequency'), drug && drug.frequency);
-      addField(item, t('fieldDuration'), drug && drug.duration);
-      list.appendChild(item);
-    }
+    for (const drug of detected) addDrug(list, drug, false);
     readCard.appendChild(list);
-  } else {
-    readCard.appendChild(makeElement('p', null, t('detectedEmpty')));
+    cards.appendChild(readCard);
   }
-  cards.appendChild(readCard);
-  box.appendChild(cards);
 
+  if (unverifiedCount > 0) {
+    const unverified = makeElement('p', 'interaction-unverified');
+    unverified.append(
+      icon('info'),
+      makeElement('span', null, t('notVerifiedSummary', { count: unverifiedCount })),
+    );
+    cards.appendChild(unverified);
+  }
+  box.appendChild(cards);
 }
 
 async function showResult(result) {
@@ -496,8 +620,15 @@ async function showResult(result) {
   show('thumb', false);
   latestResult = result;
   latestResultIsSample = false;
-  renderResult(result);
-  showStep('result');
+  try {
+    renderResult(result);
+    showStep('result');
+  } catch (error) {
+    stopPolling();
+    console.error('Could not display the result:', error);
+    showError(t('resultDisplayFailure'));
+    showStep('result');
+  }
 }
 
 function startPolling(job) {

@@ -20,6 +20,7 @@ test('unknown pairs are explicitly unverified in production data', async () => {
   assert.equal(result.status, 'not_verified');
   assert.deepEqual(result.checks, [{
     status: 'not_verified',
+    review_status: 'unreviewed',
     drug_a: 'TEST-ONLY-ALPHA',
     drug_b: 'TEST-ONLY-BETA',
   }]);
@@ -30,6 +31,44 @@ test('a single medicine is not reported as interaction-free', async () => {
 
   assert.equal(result.status, 'not_verified');
   assert.deepEqual(result.checks, []);
+});
+
+test('a production table pair is returned as unreviewed without startup failure', async () => {
+  const { addFonSummaries, checkDrugInteraction } = require('../interactions');
+  const result = await checkDrugInteraction('Ibuprofène', 'Aspirine');
+
+  assert.equal(result.status, 'verified');
+  assert.equal(result.review_status, 'unreviewed');
+  assert.equal(result.source.display_name_en, 'FDA drug label');
+  const [withFon] = await addFonSummaries([result], async () => {
+    assert.fail('A speaker-written summary must not call automatic translation');
+  });
+  assert.equal(withFon.summary_fon_human, result.summary_fon_human);
+  assert.equal(withFon.summary_fon, undefined);
+});
+
+test('review status is calculated from the table metadata', async () => {
+  const reviewedChecker = createInteractionChecker({
+    ...fixture,
+    meta: { ...fixture.meta, reviewed_by_pharmacist: true },
+  });
+  const result = await reviewedChecker.checkDrugInteraction(
+    'Épreuve Témoin A',
+    'Substance Épreuve B',
+  );
+
+  assert.equal(result.review_status, 'reviewed');
+});
+
+test('an empty interaction table is valid and starts without an error', async () => {
+  const emptyChecker = createInteractionChecker({
+    ...fixture,
+    aliases: [],
+    pairs: [],
+  });
+  const result = await emptyChecker.checkDrugInteraction('TEST-ONLY-A', 'TEST-ONLY-B');
+
+  assert.equal(result.status, 'not_verified');
 });
 
 test('fixture pair lookup ignores case and diacritics', async () => {
@@ -105,6 +144,46 @@ test('failed Fon translation leaves the verified source summaries intact and rep
   assert.equal(result.summary_fr, interaction.summary_fr);
   assert.equal(result.summary_fon_status, 'unavailable');
   assert.deepEqual(errors, ['synthetic translation failure']);
+});
+
+test('human Fon summaries skip automatic translation', async () => {
+  const interaction = {
+    ...(await fixtureChecker.checkDrugInteraction(
+      'Épreuve Témoin A',
+      'Substance Épreuve B',
+    )),
+    summary_fon_human: 'TEST ONLY: speaker-written fixture.',
+  };
+  let translationCalled = false;
+  const [result] = await addFonSummaries([interaction], async () => {
+    translationCalled = true;
+    return 'TEST ONLY: automatic fixture.';
+  });
+
+  assert.equal(translationCalled, false);
+  assert.equal(result.summary_fon_human, 'TEST ONLY: speaker-written fixture.');
+  assert.equal(result.summary_fon, undefined);
+});
+
+test('automatic Fon translation can be disabled', async () => {
+  const previous = process.env.FON_MT;
+  process.env.FON_MT = '0';
+  let translationCalled = false;
+  const interaction = await fixtureChecker.checkDrugInteraction(
+    'Épreuve Témoin A',
+    'Substance Épreuve B',
+  );
+  try {
+    const [result] = await addFonSummaries([interaction], async () => {
+      translationCalled = true;
+      return 'TEST ONLY: automatic fixture.';
+    });
+    assert.equal(translationCalled, false);
+    assert.equal(result.summary_fon_status, 'disabled');
+  } finally {
+    if (previous === undefined) delete process.env.FON_MT;
+    else process.env.FON_MT = previous;
+  }
 });
 
 test('invalid input and missing required summaries are rejected', async () => {

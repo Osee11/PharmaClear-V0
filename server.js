@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const { createDailyAnalysisLimiter } = require('./daily-limit');
 const {
   analyzePrescription,
   translateInteractionSummaryToFon,
@@ -27,6 +28,10 @@ const RELAY_TOKEN = process.env.RELAY_TOKEN || '';
 const INTERNAL_RELAY_TOKEN = process.env.INTERNAL_RELAY_TOKEN || '';
 const DEMO_ACCESS_CODE = process.env.DEMO_ACCESS_CODE || '';
 const DAILY_USAGE_FILE = path.join(__dirname, 'runtime', 'daily-analysis-usage.json');
+const dailyAnalysisLimiter = createDailyAnalysisLimiter({
+  limit: DAILY_ANALYSIS_LIMIT,
+  filePath: DAILY_USAGE_FILE,
+});
 const TLS_CERT_FILE = process.env.TLS_CERT_FILE || '';
 const TLS_KEY_FILE = process.env.TLS_KEY_FILE || '';
 // Sans clé API (ou avec PHARMA_MOCK=1) : mode simulation, aucun appel à Meta.
@@ -47,7 +52,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
 const requestWindows = new Map();
-let dailyUsageQueue = Promise.resolve();
 
 function secretMatches(expected, received) {
   if (!expected || typeof received !== 'string' || Buffer.byteLength(received) > 256) {
@@ -106,36 +110,6 @@ function limitAnalyzeRequests(req, res, next) {
 function limitPublicAnalyzeRequests(req, res, next) {
   if (isInternalRelayRequest(req)) return next();
   return limitAnalyzeRequests(req, res, next);
-}
-
-async function consumeDailyAnalysisSlot() {
-  if (DAILY_ANALYSIS_LIMIT === 0) return { allowed: true };
-
-  const operation = dailyUsageQueue.then(async () => {
-    const today = new Date().toISOString().slice(0, 10);
-    let usage = { date: today, count: 0 };
-    try {
-      const current = JSON.parse(await fs.promises.readFile(DAILY_USAGE_FILE, 'utf8'));
-      if (current && typeof current.date === 'string' &&
-          Number.isSafeInteger(current.count) && current.count >= 0 &&
-          current.date === today) {
-        usage = current;
-      }
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-
-    if (usage.count >= DAILY_ANALYSIS_LIMIT) return { allowed: false };
-
-    const nextUsage = { date: today, count: usage.count + 1 };
-    await fs.promises.mkdir(path.dirname(DAILY_USAGE_FILE), { recursive: true });
-    const temporaryFile = `${DAILY_USAGE_FILE}.${process.pid}.tmp`;
-    await fs.promises.writeFile(temporaryFile, `${JSON.stringify(nextUsage)}\n`, { mode: 0o600 });
-    await fs.promises.rename(temporaryFile, DAILY_USAGE_FILE);
-    return { allowed: true, remaining: DAILY_ANALYSIS_LIMIT - nextUsage.count };
-  });
-  dailyUsageQueue = operation.then(() => undefined, () => undefined);
-  return operation;
 }
 
 const upload = multer({
@@ -247,6 +221,8 @@ app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
   const file = req.file;
   console.log(`Image reçue : ${file.size} octets (${file.mimetype})`);
 
+  let reservation;
+  let analysisCompleted = false;
   try {
     const buffer = await fs.promises.readFile(file.path);
     if (!imageMatchesMime(buffer, file.mimetype)) {
@@ -254,7 +230,7 @@ app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
     }
     let dailySlot;
     try {
-      dailySlot = await consumeDailyAnalysisSlot();
+      dailySlot = await dailyAnalysisLimiter.consume();
     } catch (error) {
       console.error('Could not read or update the daily analysis limit:', error.message);
       return res.json({
@@ -270,7 +246,12 @@ app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
         error: 'The daily analysis limit has been reached. Please try again tomorrow.',
       });
     }
-    if (MOCK) return res.json(await mockResult());
+    reservation = dailySlot.reservation;
+    if (MOCK) {
+      const result = await mockResult();
+      analysisCompleted = true;
+      return res.json(result);
+    }
 
     const result = await analyzePrescription(buffer, file.mimetype);
     const interactions = await checkDrugInteractions(result.detected_drugs);
@@ -280,6 +261,7 @@ app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
       (error) => console.error('Fon translation unavailable for a verified interaction:', error.message),
     );
     console.log(`Analyse terminée : ${result.detected_drugs.length} lu(s), ${result.uncertain.length} à vérifier`);
+    analysisCompleted = true;
     return res.json({
       ...result,
       interaction_status: interactions.status,
@@ -303,6 +285,13 @@ app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
     console.error('Erreur inattendue :', e);
     return res.status(500).json({ status: 'error', error: 'erreur interne' });
   } finally {
+    if (reservation && !analysisCompleted) {
+      try {
+        await dailyAnalysisLimiter.refund(reservation);
+      } catch (error) {
+        console.error('Could not refund the daily analysis slot after failure:', error.message);
+      }
+    }
     // Données de santé : on ne garde jamais la photo sur le serveur Node.
     fs.promises.unlink(file.path).catch((e) => {
       console.error('Suppression de la photo temporaire impossible :', e);

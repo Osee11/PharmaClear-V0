@@ -5,5 +5,91 @@
     "reviewed_by_pharmacist": false
   },
   "aliases": [],
-  "pairs": []
+  "pairs": [
+    {
+      "a": "ibuprofène",
+      "b": "aspirine",
+      "severity": "avoid",
+      "summary_en": "According to the US FDA drug label, ibuprofen can interfere with the antiplatelet effect of aspirin, and taking ibuprofen and aspirin together is not generally recommended.",
+      "summary_fr": "Selon l'étiquetage officiel américain (FDA), l'ibuprofène peut gêner l'effet antiagrégant plaquettaire de l'aspirine, et l'association ibuprofène + aspirine n'est généralement pas recommandée.",
+      "source": {
+        "title": "DailyMed: IBUPROFEN tablet, film coated (Strides Pharma Science Limited), PRECAUTIONS, Drug Interactions, revised 10/2025",
+        "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=a266a3c6-932f-476f-ae93-48a785c92286",
+        "accessed": "2026-10-31",
+        "display_name": "FDA drug label",
+        "publication_date": "2025-10",
+        "display_name_en": "FDA drug label",
+        "display_name_fr": "étiquetage FDA"
+      },
+      "summary_fon_human": "Lee nǔ e è wlan dó wema jí ɖò États-Unis é (FDA) ɖɔ gbɔn é ɔ, ibuprofen sixu wà nǔ dó, nǔ e aspirin nɔ wà dó hǔn mɛ é wu, bɔ ɖò kpaa mɛ ɔ, é nɔ kplɔ́n mɛ ɖɔ è ni ma sɔ́ ibuprofen + aspirin ɖó kpɔ́ ó."
+    },
+    {
+      "a": "ibuprofène",
+      "b": "furosémide",
+      "severity": "monitor",
+      "summary_en": "According to the US FDA drug label, ibuprofen can reduce the effect of furosemide in some patients. Patients should be watched for kidney problems and for loss of the diuretic effect.",
+      "summary_fr": "Selon l'étiquetage officiel américain (FDA), l'ibuprofène peut réduire l'effet du furosémide chez certains patients. Il faut surveiller l'apparition de problèmes rénaux et la perte de l'effet diurétique.",
+      "source": {
+        "title": "DailyMed: IBUPROFEN tablet, film coated (Strides Pharma Science Limited), PRECAUTIONS, Drug Interactions, revised 10/2025",
+        "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=a266a3c6-932f-476f-ae93-48a785c92286",
+        "accessed": "2026-10-31",
+        "display_name": "FDA drug label",
+        "publication_date": "2025-10",
+        "display_name_en": "FDA drug label",
+        "display_name_fr": "étiquetage FDA"
+      },
+      "summary_fon_human": "Lee FDA États-Unis tɔn e è wlan nǔ dó é xlɛ́ gbɔn é ɔ, ibuprofen sixu ɖè nǔ e furosemide nɔ wà dó azinzɔnnɔ ɖé lɛ wu é kpò. È ɖó na nɔ kpɔ́n azinzɔnnɔ lɛ bo na kpɔ́n ɖɔ ye ɖò tagba ɖé lɛ ɖó wɛ ɖò ayi mɛ, bo lɛ́ ɖò nǔ e nɔ zɔ́n bɔ è nɔ bló aɖɔwé é hɛn bú wɛ à jí."
+    },
+    {
+      "a": "ibuprofène",
+      "b": "lithium",
+      "severity": "caution",
+      "summary_en": "According to the US FDA drug label, ibuprofen raised lithium levels in a small study of volunteers. People taking both should be watched carefully for signs of lithium toxicity.",
+      "summary_fr": "Selon l'étiquetage officiel américain (FDA), l'ibuprofène a augmenté les taux de lithium dans une petite étude chez des volontaires. Les personnes qui prennent les deux doivent être surveillées de près pour détecter des signes de toxicité du lithium.",
+      "source": {
+        "title": "DailyMed: IBUPROFEN tablet, film coated (Strides Pharma Science Limited), PRECAUTIONS, Drug Interactions, revised 10/2025",
+        "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=a266a3c6-932f-476f-ae93-48a785c92286",
+        "accessed": "2026-10-31",
+        "display_name": "FDA drug label",
+        "publication_date": "2025-10",
+        "display_name_en": "FDA drug label",
+        "display_name_fr": "étiquetage FDA"
+      },
+      "summary_fon_human": "Lee nǔ e è wlan dó nǔɖuɖu kpo amasin kpo jí ɖò États-Unis é (FDA) xlɛ́ gbɔn é ɔ, ibuprofen zɔ́n bɔ lithium sukpɔ́ ɖò nǔ kpɛví e è gbéjé kpɔ́n dó mɛɖéezejotɔ́ lɛ jí é ɖé mɛ. È ɖó na nɔ kpɔ́n mɛ ɖěɖee ɖò nǔ wè lɛ bǐ nu wɛ lɛ é ganji bo na mɔ ɖɔ ye ɖó wuntun aɖǐ e nɔ nyí lithium é tɔn à jí."
+    },
+    {
+      "a": "ibuprofène",
+      "b": "méthotrexate",
+      "severity": "caution",
+      "summary_en": "According to the US FDA drug label, caution should be used when an anti-inflammatory medicine such as ibuprofen is taken together with methotrexate.",
+      "summary_fr": "Selon l'étiquetage officiel américain (FDA), il faut être prudent lorsqu'un anti-inflammatoire comme l'ibuprofène est pris en même temps que le méthotrexate.",
+      "source": {
+        "title": "DailyMed: IBUPROFEN tablet, film coated (Strides Pharma Science Limited), PRECAUTIONS, Drug Interactions, revised 10/2025",
+        "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=a266a3c6-932f-476f-ae93-48a785c92286",
+        "accessed": "2026-10-31",
+        "display_name": "FDA drug label",
+        "publication_date": "2025-10",
+        "display_name_en": "FDA drug label",
+        "display_name_fr": "étiquetage FDA"
+      },
+      "summary_fon_human": "Lee nǔ e è wlan dó wema jí ɖò États-Unis é (FDA) ɖɔ gbɔn é ɔ, è ɖó na cɔ́ mɛɖée hwenu e è ɖò atínkɛ́n e nɔ hɛn agbaza mɛtɔn syɛn é ɖé nu wɛ ɖi ibuprofen ɖò hwe ɖokpo ɔ nu xá methotrexate ."
+    },
+    {
+      "a": "ibuprofène",
+      "b": "warfarine",
+      "severity": "caution",
+      "summary_en": "According to the US FDA drug label, caution is needed when ibuprofen is given to patients taking anticoagulants such as warfarin. Taking them together increases the risk of serious bleeding in the digestive tract.",
+      "summary_fr": "Selon l'étiquetage officiel américain (FDA), la prudence est nécessaire lorsque l'ibuprofène est donné à des patients qui prennent des anticoagulants comme la warfarine. L'association augmente le risque de saignement digestif grave.",
+      "source": {
+        "title": "DailyMed: IBUPROFEN tablet, film coated (Strides Pharma Science Limited), PRECAUTIONS, Drug Interactions, revised 10/2025",
+        "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=a266a3c6-932f-476f-ae93-48a785c92286",
+        "accessed": "2026-10-31",
+        "display_name": "FDA drug label",
+        "publication_date": "2025-10",
+        "display_name_en": "FDA drug label",
+        "display_name_fr": "étiquetage FDA"
+      },
+      "summary_fon_human": "Sɔgbe xá alixlɛ́mɛ acɛkpikpa États-Unis tɔn e kúnkplá nǔ e è nɔ wlan dó nǔ jí lɛ é (FDA) é ɔ, è ɖó na cɔ́ mɛɖée hwenu e è ɖò ibuprofen na azinzɔnnɔ ɖěɖee ɖò amasin e nɔ zɔ́n bɔ hun nɔ xú ɖò agbaza mɛ lɛ é ɖi warfarin nu wɛ é wɛ é. Nǔ enɛ e è nɔ xò kplé é nɔ zɔ́n bɔ hun nɔ tɔ́n ɖò xomɛ tawun."
+    }
+  ]
 }

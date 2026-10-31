@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600" viewBox="0 0 1200 1600">
+  <rect width="1200" height="1600" fill="#ffffff"/>
+  <rect x="64" y="64" width="1072" height="1472" rx="18" fill="none" stroke="#1b4332" stroke-width="8"/>
+  <text x="120" y="180" font-family="DejaVu Sans, sans-serif" font-size="30" font-weight="700" fill="#1b4332">ORDONNANCE FICTIVE / SAMPLE PRESCRIPTION</text>
+  <text x="120" y="250" font-family="DejaVu Sans, sans-serif" font-size="26" font-weight="700" fill="#9b2226">SOFTWARE TEST ONLY — NOT FOR CLINICAL USE</text>
+  <line x1="120" y1="310" x2="1080" y2="310" stroke="#cbd5d1" stroke-width="4"/>
+  <text x="120" y="410" font-family="DejaVu Sans, sans-serif" font-size="40" font-weight="700" fill="#202c28">Medication / Médicament</text>
+  <text x="120" y="520" font-family="DejaVu Sans, sans-serif" font-size="30" fill="#46534e">Names only; no dosage or directions.</text>
+  <text x="120" y="570" font-family="DejaVu Sans, sans-serif" font-size="30" fill="#46534e">Noms seuls ; aucune posologie ni consigne.</text>
+  <rect x="120" y="660" width="960" height="180" rx="16" fill="#f3f7f5" stroke="#b7c9c1" stroke-width="3"/>
+  <text x="170" y="775" font-family="DejaVu Sans, sans-serif" font-size="56" font-weight="700" fill="#202c28">Ibuprofène</text>
+  <rect x="120" y="890" width="960" height="180" rx="16" fill="#f3f7f5" stroke="#b7c9c1" stroke-width="3"/>
+  <text x="170" y="1005" font-family="DejaVu Sans, sans-serif" font-size="56" font-weight="700" fill="#202c28">Aspirine</text>
+  <text x="120" y="1430" font-family="DejaVu Sans, sans-serif" font-size="28" fill="#66736d">Synthetic test image — no patient information.</text>
+</svg>

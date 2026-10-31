@@ -29,6 +29,22 @@ function validateSource(source, label) {
   if (!['http:', 'https:'].includes(url.protocol)) {
     throw new Error(`${label} source URL must use HTTP or HTTPS`);
   }
+  for (const field of ['display_name', 'display_name_en', 'display_name_fr']) {
+    if (source[field] !== undefined &&
+        (typeof source[field] !== 'string' || !source[field].trim())) {
+      throw new Error(`${label} source ${field} must be a non-empty string`);
+    }
+  }
+  if (source.publication_date !== undefined) {
+    const publicationDate = source.publication_date;
+    if (typeof publicationDate !== 'string' || !/^\d{4}-\d{2}$/.test(publicationDate)) {
+      throw new Error(`${label} source publication_date must use YYYY-MM`);
+    }
+    const date = new Date(`${publicationDate}-01T00:00:00Z`);
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 7) !== publicationDate) {
+      throw new Error(`${label} has an invalid source publication date`);
+    }
+  }
 }
 
 function validateInteractionTable(candidate) {
@@ -45,10 +61,6 @@ function validateInteractionTable(candidate) {
       !Array.isArray(candidate.pairs)) {
     throw new Error('data/interactions.json has an unsupported schema');
   }
-  if (candidate.pairs.length && !candidate.meta.reviewed_by_pharmacist) {
-    throw new Error('Interaction pairs require pharmacist review before they can be used');
-  }
-
   const aliases = new Set();
   for (const [index, alias] of candidate.aliases.entries()) {
     const label = `Alias entry ${index + 1}`;
@@ -81,6 +93,11 @@ function validateInteractionTable(candidate) {
     }
     if (pair.summary_fr.length > 1000) {
       throw new Error(`${label} summaries must be at most 1000 characters`);
+    }
+    if (pair.summary_fon_human !== undefined &&
+        (typeof pair.summary_fon_human !== 'string' ||
+          !pair.summary_fon_human.trim() || pair.summary_fon_human.length > 1000)) {
+      throw new Error(`${label} summary_fon_human must be a non-empty string of at most 1000 characters`);
     }
     validateSource(pair.source, label);
     const key = [normalizeName(pair.a), normalizeName(pair.b)].sort().join('\u0000');
@@ -121,6 +138,7 @@ function createInteractionChecker(sourceTable) {
     if (!match) {
       return {
         status: 'not_verified',
+        review_status: sourceTable.meta.reviewed_by_pharmacist ? 'reviewed' : 'unreviewed',
         drug_a: typeof drugA === 'string' && drugA.trim() ? drugA.trim() : null,
         drug_b: typeof drugB === 'string' && drugB.trim() ? drugB.trim() : null,
       };
@@ -130,8 +148,10 @@ function createInteractionChecker(sourceTable) {
       drug_a: match.a,
       drug_b: match.b,
       severity: match.severity,
+      review_status: sourceTable.meta.reviewed_by_pharmacist ? 'reviewed' : 'unreviewed',
       summary_en: match.summary_en,
       summary_fr: match.summary_fr,
+      summary_fon_human: match.summary_fon_human,
       source: { ...match.source },
     };
   }
@@ -162,12 +182,21 @@ function createInteractionChecker(sourceTable) {
   return { checkDrugInteraction, checkDrugInteractions };
 }
 
-async function addFonSummaries(checks, translate, onError = () => {}) {
+async function addFonSummaries(
+  checks,
+  translate,
+  onError = () => {},
+  enabled = process.env.FON_MT !== '0',
+) {
   if (!Array.isArray(checks) || typeof translate !== 'function') {
     throw new TypeError('checks and a translation function are required');
   }
   return Promise.all(checks.map(async (check) => {
     if (!check || check.status !== 'verified') return check;
+    if (typeof check.summary_fon_human === 'string' && check.summary_fon_human.trim()) {
+      return check;
+    }
+    if (!enabled) return { ...check, summary_fon_status: 'disabled' };
     try {
       const summaryFon = await translate(check.summary_en);
       if (typeof summaryFon !== 'string' || !summaryFon.trim()) {

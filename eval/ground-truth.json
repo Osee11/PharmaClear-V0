@@ -1,3 +1,9 @@
 {
-  "cases": []
+  "cases": [
+    {
+      "id": "sample-ibuprofen-aspirin",
+      "image": "sample-ibuprofen-aspirin.png",
+      "expected": ["Ibuprofène", "Aspirine"]
+    }
+  ]
 }

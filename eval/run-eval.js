@@ -69,18 +69,121 @@ function resolveImage(image) {
   return resolved;
 }
 
-async function run() {
+function parseArguments(args) {
+  const options = { format: 'table' };
+  for (let index = 0; index < args.length; index++) {
+    const option = args[index];
+    if (option === '--only') {
+      const id = args[++index];
+      if (!id || id.startsWith('--')) throw new Error('--only requires a case id');
+      options.only = id;
+    } else if (option === '--format') {
+      const format = args[++index];
+      if (!['table', 'csv', 'markdown'].includes(format)) {
+        throw new Error('--format must be table, csv, or markdown');
+      }
+      options.format = format;
+    } else if (option === '--help') {
+      options.help = true;
+    } else {
+      throw new Error(`Unknown option: ${option}`);
+    }
+  }
+  return options;
+}
+
+function validateCases(cases) {
+  const ids = new Set();
+  for (const [index, item] of cases.entries()) {
+    if (!item || typeof item.id !== 'string' || !item.id.trim() ||
+        ids.has(item.id) || typeof item.image !== 'string' ||
+        !Array.isArray(item.expected) ||
+        item.expected.some((name) => typeof name !== 'string' || !name.trim())) {
+      throw new Error(`Case ${index + 1} must have a unique id, image, and expected array of non-empty names`);
+    }
+    ids.add(item.id);
+  }
+}
+
+function selectCases(cases, only) {
+  const selected = only ? cases.filter((item) => item.id === only) : cases;
+  if (only && selected.length === 0) {
+    throw new Error(`No evaluation case has id "${only}"`);
+  }
+  return selected;
+}
+
+function summaryLine(summary) {
+  return `Summary: cases=${summary.cases} correct=${summary.correct} ` +
+    `uncertain=${summary.uncertain} false_with_confidence=${summary.falseWithConfidence} ` +
+    `missed=${summary.missed} errors=${summary.errors} ` +
+    `mean_time=${summary.meanSeconds.toFixed(1)}s`;
+}
+
+function csvEscape(value) {
+  const text = String(value ?? '');
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function formatCsv(rows, summary) {
+  const columns = [
+    'id', 'image', 'correct', 'uncertain', 'false_with_confidence',
+    'missed', 'errors', 'mean_time_seconds', 'status',
+  ];
+  const lines = [columns.join(',')];
+  for (const row of rows) {
+    lines.push([
+      row.id, row.image, row.correct, row.uncertain,
+      row.false_with_confidence, row.missed,
+      row.status.startsWith('ERROR:') ? 1 : 0, '', row.status,
+    ].map(csvEscape).join(','));
+  }
+  lines.push([
+    'SUMMARY', '', summary.correct, summary.uncertain,
+    summary.falseWithConfidence, summary.missed, summary.errors,
+    summary.meanSeconds.toFixed(1), '',
+  ].map(csvEscape).join(','));
+  return `${lines.join('\n')}\n`;
+}
+
+function formatMarkdown(rows, summary) {
+  const lines = [
+    '| ID | Image | Correct | Uncertain | False with confidence | Missed | Status | Seconds |',
+    '|---|---|---:|---:|---:|---:|---|---:|',
+    ...rows.map((row) =>
+      `| ${row.id} | ${row.image} | ${row.correct} | ${row.uncertain} | ` +
+      `${row.false_with_confidence} | ${row.missed} | ${row.status.replace(/\|/g, '\\|')} | ${row.seconds} |`),
+    '',
+    summaryLine(summary),
+  ];
+  return `${lines.join('\n')}\n`;
+}
+
+function printReport(rows, summary, format, manualReview) {
+  if (format === 'csv') {
+    process.stdout.write(formatCsv(rows, summary));
+    return;
+  }
+  if (format === 'markdown') {
+    process.stdout.write(formatMarkdown(rows, summary));
+    return;
+  }
+  console.table(rows);
+  if (manualReview.length) {
+    console.log('Manual review cases:', JSON.stringify(manualReview, null, 2));
+  }
+  console.log(summaryLine(summary));
+}
+
+async function run(options = {}) {
   const groundTruthPath = path.join(EVAL_DIR, 'ground-truth.json');
   const groundTruth = JSON.parse(await fs.readFile(groundTruthPath, 'utf8'));
   if (!groundTruth || !Array.isArray(groundTruth.cases)) {
     throw new Error('ground-truth.json must contain a cases array');
   }
-  if (groundTruth.cases.length === 0) {
-    console.log('No evaluation cases. Add fake prescription images under eval/images/ and list them in ground-truth.json.');
-    console.log('Summary: cases=0 correct=0 uncertain=0 false_with_confidence=0 missed=0 errors=0 mean_time=0.0s');
-    return;
-  }
-  if (!CONFIG.apiKey) {
+  validateCases(groundTruth.cases);
+  const cases = selectCases(groundTruth.cases, options.only);
+  if (cases.length > 0 && !CONFIG.apiKey) {
     throw new Error('META_API_KEY or MODEL_API_KEY is required for evaluation.');
   }
 
@@ -94,12 +197,7 @@ async function run() {
   let missedTotal = 0;
   let errorsTotal = 0;
 
-  for (const [index, item] of groundTruth.cases.entries()) {
-    if (!item || !Array.isArray(item.expected) ||
-        item.expected.some((name) => typeof name !== 'string' || !name.trim())) {
-      throw new Error(`Case ${index + 1} must have an expected array of non-empty names`);
-    }
-
+  for (const item of cases) {
     const imagePath = resolveImage(item.image);
     const buffer = await fs.readFile(imagePath);
     const started = performance.now();
@@ -115,6 +213,7 @@ async function run() {
       missedTotal += scores.missed.length;
 
       const row = {
+        id: item.id,
         image: item.image,
         correct: scores.correct.length,
         uncertain: scores.uncertain.length,
@@ -126,6 +225,7 @@ async function run() {
       rows.push(row);
       if (scores.ambiguous.length || scores.uncertain.length) {
         manualReview.push({
+          id: item.id,
           image: item.image,
           expected_uncertain: scores.uncertain,
           ambiguous: scores.ambiguous,
@@ -135,6 +235,7 @@ async function run() {
       const elapsedMs = performance.now() - started;
       elapsedTotal += elapsedMs;
       rows.push({
+        id: item.id,
         image: item.image,
         correct: 0,
         uncertain: 0,
@@ -144,28 +245,46 @@ async function run() {
         status: `ERROR: ${error.message}`,
       });
       errorsTotal++;
-      manualReview.push({ image: item.image, error: error.message });
+      manualReview.push({ id: item.id, image: item.image, error: error.message });
     }
   }
 
-  console.table(rows);
-  if (manualReview.length) {
-    console.log('Manual review cases:', JSON.stringify(manualReview, null, 2));
-  }
-
-  const meanSeconds = attempted ? elapsedTotal / attempted / 1000 : 0;
-  console.log(
-    `Summary: cases=${attempted} correct=${correctTotal} uncertain=${uncertainTotal} ` +
-    `false_with_confidence=${falseConfidentTotal} missed=${missedTotal} ` +
-    `errors=${errorsTotal} mean_time=${meanSeconds.toFixed(1)}s`,
-  );
+  const summary = {
+    cases: attempted,
+    correct: correctTotal,
+    uncertain: uncertainTotal,
+    falseWithConfidence: falseConfidentTotal,
+    missed: missedTotal,
+    errors: errorsTotal,
+    meanSeconds: attempted ? elapsedTotal / attempted / 1000 : 0,
+  };
+  printReport(rows, summary, options.format || 'table', manualReview);
+  return { rows, summary, manualReview };
 }
 
 if (require.main === module) {
-  run().catch((error) => {
+  try {
+    const options = parseArguments(process.argv.slice(2));
+    if (options.help) {
+      console.log('Usage: node eval/run-eval.js [--only <id>] [--format table|csv|markdown]');
+    } else {
+      run(options).catch((error) => {
+        console.error(`Evaluation failed: ${error.message}`);
+        process.exitCode = 1;
+      });
+    }
+  } catch (error) {
     console.error(`Evaluation failed: ${error.message}`);
     process.exitCode = 1;
-  });
+  }
 }
 
-module.exports = { normalizeName, scoreResult };
+module.exports = {
+  normalizeName,
+  scoreResult,
+  parseArguments,
+  validateCases,
+  selectCases,
+  formatCsv,
+  formatMarkdown,
+};

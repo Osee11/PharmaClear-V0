@@ -13,8 +13,9 @@ medicine combination is safe.
 
 - Separates confident transcriptions from uncertain or unreadable text.
 - Checks medicine pairs only against a locally maintained, sourced interaction
-  table. The production table is currently empty.
-- Labels every pair without a table entry as unverified. No alert is not proof
+  table. The table currently contains five pairs from one US FDA-listed
+  ibuprofen drug label; it has not been reviewed by a pharmacist.
+- Labels every pair without a table entry as undocumented. No alert is not proof
   of safety.
 - Keeps a compressed photo in the phone's IndexedDB queue while offline and
   resumes upload when the connection returns or the app is reopened. Analysis
@@ -25,8 +26,10 @@ medicine combination is safe.
 
 The patient-facing interface is English by default, with English, French, and
 Fon language choices. Unprovided Fon interface text falls back to English.
-Machine-generated Fon interaction translations are shown only for verified
-alerts and are labelled **“Machine translation, please verify.”**
+Fon explanations written by a speaker are shown only for documented alerts
+and are labelled **“Written by a Fon speaker.”** Automatic Fon translation is
+only a fallback, is labelled **“Machine translation, please verify,”** and can
+be disabled with `FON_MT=0`.
 
 ## Architecture
 
@@ -80,10 +83,12 @@ For real API tests, use synthetic images only:
 node lire.js public/samples/sample-prescription.png
 ```
 
-The included sample is a synthetic prescription-style document. The real model
-classified it as `not_a_prescription` with `image_quality: good`; this smoke
-test confirms API access and response parsing, **not** prescription OCR
-accuracy. The sample button displays that saved result without calling Meta.
+The included image is a clearly marked fictional test, with only the names
+“Ibuprofène” and “Aspirine”; it contains no patient details, dosage, or
+treatment instructions. The real `muse-wonder-1.0` pipeline read both names and
+matched the pair to the locally documented interaction table. The checked-in
+sample result is the unedited response from the full pipeline. Opening the
+sample in the app displays that saved result without calling Meta.
 
 ## Patient and pharmacy-counter modes
 
@@ -98,72 +103,76 @@ accuracy. The sample button displays that saved result without calling Meta.
 The PWA caches its shell and synthetic sample. Core page, script, style, and
 translation requests use network-first caching, with cache fallback only when
 the network request fails. The cache is versioned as
-`pharmaclear-static-v6`.
+`pharmaclear-static-v7`.
 
-## Verified interaction data
+## Documented interaction data
 
-[`data/interactions.json`](./data/interactions.json) has no pairs or aliases by
-default. Do not add entries from memory. Each pair requires:
+[`data/interactions.json`](./data/interactions.json) contains five pairs taken
+from one US FDA-listed ibuprofen label on DailyMed. The table is explicitly
+**not reviewed by a pharmacist** (`reviewed_by_pharmacist: false`,
+`last_reviewed: null`). Every displayed alert identifies its source and
+publication date and clearly states that it has not yet been reviewed by a
+pharmacist.
 
-- generic names `a` and `b`, and a severity (`avoid`, `caution`, or `monitor`);
-- non-empty `summary_en` and `summary_fr`;
-- a source title, HTTP(S) URL, and `accessed` date;
-- pharmacist review before the production table can contain entries.
+The pairs are ibuprofène with aspirine, furosémide, lithium, méthotrexate, and
+warfarine.
 
-Names are matched after case folding, whitespace normalization, and NFD accent
-removal. Pair order is irrelevant; a name that normalizes to itself is ignored.
-Brand-to-generic aliases are applied only when the alias has its own source.
-See [`data/README.md`](./data/README.md) for the format. Test-only values are
-isolated in [`tests/fixtures/interactions.json`](./tests/fixtures/interactions.json)
+The `avoid`, `caution`, and `monitor` values are editorial display categories,
+not a validated clinical severity scale. Pair matching uses exact generic
+names after ignoring case, accents, and repeated whitespace; pair order does
+not matter. Brand names and English translations of the French generic names
+are not recognized. Names or pairs absent from the table remain undocumented;
+they are never represented as safe. No aliases are currently configured.
+See [`data/README.md`](./data/README.md) for the source and schema.
+
+English and French summaries come from the source table. Speaker-written Fon
+summaries use the distinct `summary_fon_human` field and are never overwritten.
+When no human summary is present, automatic translation is used only if
+`FON_MT` is not `0`; translation failures or disabled translation leave the
+documented English/French summaries available. Test-only values are isolated
+in [`tests/fixtures/interactions.json`](./tests/fixtures/interactions.json)
 and must never be copied into production data.
-
-For a verified pair, English and French summaries come from the table. Fon is
-translated from `summary_en` only for that verified alert, and the UI marks it
-as machine translation requiring review. Translation failure leaves the
-verified English/French summaries visible and reports that Fon is unavailable.
-There are currently no verified alerts or Fon translations to demonstrate.
 
 ## Reliability evaluation
 
-`eval/ground-truth.json` starts with an empty `cases` list. Add only fabricated
-prescription images under `eval/images/` and record their expected medicine
-names before running:
-
-```json
-{
-  "cases": [
-    {
-      "image": "example.png",
-      "expected": ["EXAMPLE-TEST-NAME"]
-    }
-  ]
-}
-```
-
-Then run:
+`eval/ground-truth.json` contains one synthetic case with expected medicine
+names. `eval/images/` is Git-ignored; copy the public synthetic sample there
+before running:
 
 ```sh
+mkdir -p eval/images
+cp public/samples/sample-prescription.png eval/images/sample-ibuprofen-aspirin.png
 node eval/run-eval.js
 ```
 
-The report includes correct, uncertain, false-with-confidence, missed names,
-ambiguous cases for manual review, errors, and mean time. Image files under
-`eval/images/` are ignored by Git. **No evaluation cases have been supplied, so
-there is no measured OCR accuracy or false-confident rate yet.**
+Filter by case ID or export the same report as CSV/Markdown:
 
-The API smoke test on the included synthetic image returned:
-
-```json
-{
-  "status": "not_a_prescription",
-  "image_quality": "good",
-  "detected_drugs": [],
-  "uncertain": [],
-  "model": "muse-wonder-1.0"
-}
+```sh
+node eval/run-eval.js --only sample-ibuprofen-aspirin
+node eval/run-eval.js --format csv
+node eval/run-eval.js --format markdown
 ```
 
-This is not a measurement of handwritten-prescription performance.
+### Results
+
+| Evaluation set | Images | Correct names | Uncertain | False with confidence | Missed | Errors | Mean time |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Synthetic printed sample | 1 | 2 | 0 | 0 | 0 | 0 | 4.4 s |
+
+This is the measured result of one clean, synthetic printed image—not an
+estimate of accuracy on real, handwritten, or patient prescriptions.
+
+### Known limits
+
+| Limit | Current status |
+|---|---|
+| Interaction coverage | Five pairs from one US FDA-listed ibuprofen label; not reviewed by a pharmacist. |
+| OCR reliability | Measured on 1 synthetic printed image only; no real-prescription accuracy claim. |
+| Network | OCR analysis requires an online connection; offline photos wait locally for upload. |
+| iOS background upload | Background Sync is not implemented; reopening the app may be required. |
+
+See [`eval/README.md`](./eval/README.md) for the ground-truth format and
+evaluation options.
 
 ## Access, quotas, and deployment
 
@@ -171,6 +180,8 @@ This is not a measurement of handwritten-prescription performance.
 - `DAILY_ANALYSIS_LIMIT` defaults to 100 analyses per UTC day. Set it to `0`
   only to disable the cap. The counter is stored in the ignored
   `runtime/daily-analysis-usage.json` file so a Node restart does not reset it.
+  Only a completed analysis consumes a slot; retryable failures, rejected API
+  requests, and unusable model output refund the reserved slot.
 - `DEMO_ACCESS_CODE` is optional. When configured, the page asks for it and
   sends it in a request header; it is kept only for the browser session, not in
   the URL.
@@ -189,6 +200,8 @@ This is not a measurement of handwritten-prescription performance.
 No hosting provider, TLS certificate, production secret, or public demo URL is
 configured in this repository. Do not share a public link until HTTPS, access
 code, relay binding, secrets, and the limits have been configured and tested.
+For container deployment on Render, Railway, or a VPS, see
+[`DEPLOY.md`](./DEPLOY.md).
 
 ## Tests
 
@@ -196,7 +209,8 @@ code, relay binding, secrets, and the limits have been configured and tested.
 npm test
 ```
 
-The tests cover evaluation scoring, accent/case normalization, pair ordering,
-duplicate names, sourced aliases, invalid entries, and translation only for
-verified pairs. The sample and test fixtures contain no real medicine names or
-patient information.
+The tests cover evaluation scoring and exports, accent/case normalization,
+pair ordering, duplicate names, sourced aliases, invalid entries, daily-quota
+refunds, documented versus unreviewed table status, and Fon translation
+provenance. Test fixtures use synthetic medicine names and contain no patient
+information.

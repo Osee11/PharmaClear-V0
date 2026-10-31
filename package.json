@@ -16,6 +16,7 @@
     "multer": "^2.4.0"
   },
   "devDependencies": {
+    "jsdom": "^26.1.0",
     "nodemon": "^3.1.14"
   }
 }
