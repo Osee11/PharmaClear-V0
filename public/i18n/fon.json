@@ -1,3 +1,14 @@
 {
-  "languageLabel": "Language"
+  "tagline": "Atinkɛn jlɛ wéma xa nu mɛ kpodó Dogbó e ɖò wɛn lɛ é kpo",
+  "takePhoto": "Fɔtó ɖidé",
+  "chooseImage": "Fɔtó sisɔ",
+  "sampleButton": "Tɛn kpɔ́nɖé wǔ Atinkɛn jlɛ wéma tɔn",
+  "photoInstructions": "Atinkɛn jlɛ wéma sǐn fɔtó ɔ ɖo na djɛ nu kun djí, bo nyɔ̀ ɖɛ kpɛ",
+  "uncertainTitle": "Mi xò nù kpɔ́n a ló mi ɖo djí ɖí ɖé à, mi kɛnklɛn bo kan nǔ byɔ atínkɛ́nsátɔ́ mitɔn.",
+  "detectedTitle": "Xà kpo jiɖiɖe kpo — Mí lɛ gbéjé nǔ e é wlan jɛ nukɔn ɔ̀ kpɔ́n.",
+  "verifiedTitle": "Akpágbánúmɛ nǔwiwa e è gbéjé kpɔ́n lɛ é",
+  "noInteractionSafety": "Sɛ́n ma dō nú mɛ ɔ́ ɖé xlɛ́ ɖɔ awovinú ɖě kún tíìn ó ǎ. Kan nǔ byɔ atínkɛ́nsátɔ́ towe.",
+  "disclaimer": "Nǔjlɛdonǔwu ɖé é ma jlaɖó ɖò dotóoxwé ǎ é. Alɔdó nú nǔwlanwlán kpo un wɛ, é nyí wěɖexámɛ dotóoxwé tɔn ǎ.",
+  "photoRetention": "Enyi è gbéjé fɔtóo lɛ kpɔ́n tlolo ɔ, è nɔ súnsún ye.",
+  "offlineProgress": "Ðò ɛntɛnɛti jí ǎ— fɔtó ɔ ɖó si sɛ xwe ɖo alokan elɔ jí."
 }

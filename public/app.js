@@ -23,6 +23,7 @@ let latestResult = null;
 let latestResultIsSample = false;
 let thumbObjectUrl = null;
 let demoAccessCode = '';
+let backendReachable = null;
 
 function t(key, values = {}) {
   const template = translations[key] || englishTranslations[key] || key;
@@ -180,9 +181,30 @@ function showStep(step) {
 }
 
 function updateNetworkStatus() {
-  $('network-status').textContent = navigator.onLine
-    ? t('networkOnline')
-    : t('networkOffline');
+  if (!navigator.onLine) {
+    $('network-status').textContent = t('networkOffline');
+  } else if (backendReachable === false) {
+    $('network-status').textContent = t('networkServerUnavailable');
+  } else if (backendReachable === null) {
+    $('network-status').textContent = t('networkChecking');
+  } else {
+    $('network-status').textContent = t('networkOnline');
+  }
+}
+
+async function checkBackend() {
+  if (!navigator.onLine) {
+    backendReachable = false;
+    updateNetworkStatus();
+    return;
+  }
+  try {
+    const response = await fetchTimeout('/api/health', { cache: 'no-store' }, 3000);
+    backendReachable = response.ok;
+  } catch (error) {
+    backendReachable = false;
+  }
+  updateNetworkStatus();
 }
 
 async function checkRelay() {
@@ -348,10 +370,6 @@ function renderResult(result, isSample = false) {
     'section',
     `result-card ${verified.length ? 'result-card--verified' : 'result-card--plain'}`,
   );
-  if (response.status === 401) {
-    requestDemoAccess();
-    return;
-  }
   const interactionHeading = makeElement('h2');
   interactionHeading.append(
     makeElement('span', 'card-icon', verified.length ? '!' : 'i'),
@@ -534,6 +552,17 @@ function startPolling(job) {
         { headers: relayHeaders() },
         8000,
       );
+      if (response.status === 401) {
+        requestDemoAccess();
+        return;
+      }
+      if (response.status === 429) {
+        const seconds = Math.max(1, Number(response.headers.get('Retry-After')) || 60);
+        $('status-title').textContent = t('retry');
+        $('status-detail').textContent = t('rateLimitWait', { seconds });
+        pollTimer = setTimeout(tick, seconds * 1000);
+        return;
+      }
       if (response.status === 404) {
         await failJob(job, t('errorExpired'));
         return;
@@ -541,12 +570,20 @@ function startPolling(job) {
       if (!response.ok) throw new Error(`Status HTTP ${response.status}`);
       const data = await response.json();
       if (data.status === 'done') {
-        await showResult(data.result);
+        try {
+          await showResult(data.result);
+        } catch (error) {
+          stopPolling();
+          console.error('Relay returned a completed result, but the page could not render it:', error);
+          showError(t('errorUnexpected'));
+          showStep('result');
+        }
         return;
       }
       retryDelay = POLL_MS;
       setProgress('queued');
     } catch (error) {
+      console.warn('Relay request failed; retrying:', error.message);
       setProgress(navigator.onLine ? 'retry' : 'offline');
       retryDelay = Math.min(30000, retryDelay * 2);
     }
@@ -725,16 +762,20 @@ async function initialize() {
     }
   });
   window.addEventListener('online', () => {
-    updateNetworkStatus();
+    checkBackend();
     checkRelay();
     if (activeJob) startPolling(activeJob);
   });
-  window.addEventListener('offline', updateNetworkStatus);
+  window.addEventListener('offline', () => {
+    backendReachable = false;
+    updateNetworkStatus();
+  });
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/service-worker.js')
       .catch((error) => console.error('Could not register the offline cache:', error));
   }
-  updateNetworkStatus();
+  await checkBackend();
+  setInterval(checkBackend, 4000);
   checkRelay();
   if (DEBUG_RELAY) setInterval(checkRelay, 4000);
   await resumePendingJob();

@@ -98,7 +98,7 @@ accuracy. The sample button displays that saved result without calling Meta.
 The PWA caches its shell and synthetic sample. Core page, script, style, and
 translation requests use network-first caching, with cache fallback only when
 the network request fails. The cache is versioned as
-`pharmaclear-static-v4`.
+`pharmaclear-static-v6`.
 
 ## Verified interaction data
 

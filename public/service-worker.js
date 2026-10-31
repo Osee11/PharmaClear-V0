@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'pharmaclear-static-v4';
+const CACHE_NAME = 'pharmaclear-static-v6';
 const APP_FILES = [
   '/',
   '/index.html',
