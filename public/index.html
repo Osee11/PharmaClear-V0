@@ -7,6 +7,8 @@
   <title>PharmaClear</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="shortcut icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -163,6 +165,11 @@
       <div id="sample-banner" class="banner sample-banner" hidden></div>
       <div id="mock-banner" class="banner mock-banner" hidden></div>
       <div id="result-content"></div>
+      <div id="new-btn-sentinel" aria-hidden="true"></div>
+      <button id="new-btn" class="btn btn-main scan-again" type="button" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#icon-camera"></use></svg>
+        <span data-i18n="newPrescription">Start a new prescription</span>
+      </button>
     </section>
   </main>
 
@@ -170,11 +177,6 @@
     <p data-i18n="footerDisclaimer">Prototype, not clinically validated. Always check the original prescription with a pharmacist.</p>
     <p data-i18n="photoRetention">Photos are deleted right after analysis.</p>
   </footer>
-  <button id="new-btn" class="btn btn-main scan-again" type="button" hidden>
-    <svg class="icon" aria-hidden="true"><use href="#icon-camera"></use></svg>
-    <span data-i18n="newPrescription">Scan another prescription</span>
-  </button>
-
   <script src="/app.js" defer></script>
 </body>
 </html>

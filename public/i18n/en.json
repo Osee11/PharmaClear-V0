@@ -31,6 +31,7 @@
   "reading": "Reading prescription…",
   "checkingInteractions": "Checking interactions…",
   "sending": "Sending photo…",
+  "serverWakingUp": "Server waking up…",
   "queued": "Photo received and queued.",
   "queuedDetail": "It will be analyzed when the service is available.",
   "retry": "Connection unavailable. Retrying…",

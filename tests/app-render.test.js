@@ -247,11 +247,11 @@ test('no verified interaction card is rendered without a verified alert', (t) =>
   assert.equal(dom.window.document.querySelectorAll('.interaction-unverified').length, 1);
 });
 
-test('verified alert explanation language selector distinguishes Fon provenance', (t) => {
+test('interaction explanations follow the global language and show Fon provenance', (t) => {
   const dom = createRenderer();
   t.after(() => dom.window.close());
   const { window } = dom;
-  window.renderResult({
+  const result = {
     status: 'success',
     interactions: [{
       status: 'verified',
@@ -271,31 +271,41 @@ test('verified alert explanation language selector distinguishes Fon provenance'
         url: 'https://example.invalid/',
       },
     }],
-  });
-  const picker = window.document.querySelector('.explanation-picker');
-  const explanation = window.document.querySelector('.interaction-summary');
-  const provenance = window.document.querySelector('.fon-provenance');
-  assert.equal(picker.value, 'en');
-  picker.value = 'fr';
-  picker.dispatchEvent(new window.Event('change'));
-  assert.equal(explanation.textContent, 'TEST ONLY: French fixture.');
-  picker.value = 'fon';
-  picker.dispatchEvent(new window.Event('change'));
-  assert.equal(explanation.textContent, 'TEST ONLY: speaker-written fixture.');
-  assert.equal(provenance.textContent, 'Written by a Fon speaker');
-  const interaction = {
-    status: 'verified',
-    drug_a: 'TEST-ONLY-A',
-    drug_b: 'TEST-ONLY-B',
-    severity: 'caution',
-    summary_en: 'TEST ONLY: English fixture.',
-    summary_fr: 'TEST ONLY: French fixture.',
-    summary_fon: 'TEST ONLY: machine-translation fixture.',
   };
-  window.renderResult({ status: 'success', interactions: [interaction] });
-  const machinePicker = window.document.querySelector('.explanation-picker');
-  machinePicker.value = 'fon';
-  machinePicker.dispatchEvent(new window.Event('change'));
+  window.renderResult(result);
+  assert.equal(window.document.querySelector('.explanation-picker'), null);
+  assert.equal(
+    window.document.querySelector('.interaction-summary').textContent,
+    'TEST ONLY: English fixture.',
+  );
+  window.language = 'fr';
+  window.renderResult(result);
+  assert.equal(
+    window.document.querySelector('.interaction-summary').textContent,
+    'TEST ONLY: French fixture.',
+  );
+  window.language = 'fon';
+  window.renderResult(result);
+  assert.equal(
+    window.document.querySelector('.interaction-summary').textContent,
+    'TEST ONLY: speaker-written fixture.',
+  );
+  assert.equal(
+    window.document.querySelector('.fon-provenance').textContent,
+    'Written by a Fon speaker',
+  );
+  window.renderResult({
+    status: 'success',
+    interactions: [{
+      status: 'verified',
+      drug_a: 'TEST-ONLY-A',
+      drug_b: 'TEST-ONLY-B',
+      severity: 'caution',
+      summary_en: 'TEST ONLY: English fixture.',
+      summary_fr: 'TEST ONLY: French fixture.',
+      summary_fon: 'TEST ONLY: machine-translation fixture.',
+    }],
+  });
   assert.equal(
     window.document.querySelector('.interaction-summary').textContent,
     'TEST ONLY: machine-translation fixture.',
@@ -381,9 +391,6 @@ test('Fon notice and documented severity use supplied localization data', (t) =>
       dom.window.document.querySelector('.source-citation').textContent,
       /FDA drug label.*2025/,
     );
-    const picker = dom.window.document.querySelector('.explanation-picker');
-    picker.value = 'fon';
-    picker.dispatchEvent(new dom.window.Event('change'));
     assert.equal(
       dom.window.document.querySelector('.interaction-summary').textContent,
       result.summary_fon_human,

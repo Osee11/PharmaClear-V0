@@ -31,6 +31,7 @@
   "reading": "Lecture de l’ordonnance…",
   "checkingInteractions": "Vérification des interactions…",
   "sending": "Envoi de la photo…",
+  "serverWakingUp": "Le serveur se réveille…",
   "queued": "Photo reçue et mise en file d’attente.",
   "queuedDetail": "Elle sera analysée lorsque le service sera disponible.",
   "retry": "Connexion indisponible. Nouvelle tentative…",

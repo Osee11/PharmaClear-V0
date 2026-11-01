@@ -328,11 +328,7 @@ main {
 #status-detail { margin: 0; color: var(--muted); font-size: .9rem; }
 
 .result-screen { padding-bottom: 6px; }
-.result-screen:not([hidden]) {
-  max-height: max(220px, calc(100dvh - 250px - env(safe-area-inset-bottom)));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
+#result-content { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 .banner {
   margin: 0 0 12px;
   padding: 11px 14px;
@@ -570,17 +566,15 @@ main {
 }
 .page-footer p { margin: 5px 0; overflow-wrap: anywhere; }
 .scan-again {
-  position: fixed;
+  position: static;
   z-index: 10;
-  right: max(16px, env(safe-area-inset-right));
-  bottom: max(12px, env(safe-area-inset-bottom));
-  left: max(16px, env(safe-area-inset-left));
   width: min(calc(100% - 32px), 688px);
   min-height: 56px;
-  margin: 0 auto;
+  margin: 16px auto 0;
   border-radius: 16px;
   box-shadow: var(--shadow-float);
 }
+.scan-again.is-sticky { position: sticky; bottom: 0; }
 
 .access-panel { padding: 20px; }
 .access-label { display: block; margin-top: 12px; font-weight: 750; }

@@ -24,6 +24,7 @@ let latestResultIsSample = false;
 let thumbObjectUrl = null;
 let demoAccessCode = '';
 let backendReachable = null;
+let stickyCtaObserver = null;
 
 function t(key, values = {}) {
   const template = translations[key] || englishTranslations[key] || key;
@@ -179,6 +180,13 @@ function showStep(step) {
   show('step-progress', step === 'progress');
   show('step-result', step === 'result');
   show('new-btn', step === 'result');
+  if (stickyCtaObserver) {
+    if (step === 'result') stickyCtaObserver.observe($('new-btn-sentinel'));
+    else {
+      stickyCtaObserver.unobserve($('new-btn-sentinel'));
+      $('new-btn').classList.remove('is-sticky');
+    }
+  }
 }
 
 function updateNetworkStatus() {
@@ -503,22 +511,14 @@ function renderResult(result, isSample = false) {
         }
       }
 
-      const languageSelect = makeElement('select', 'explanation-picker');
-      languageSelect.setAttribute('aria-label', t('interactionLanguage'));
-      for (const [value, label] of [['en', 'EN'], ['fr', 'FR'], ['fon', 'Fon']]) {
-        const option = makeElement('option', null, label);
-        option.value = value;
-        languageSelect.appendChild(option);
-      }
-      languageSelect.value = language;
       const explanation = makeElement('p', 'interaction-summary');
       const provenance = makeElement('p', 'fon-provenance');
-      const renderExplanation = (selectedLanguage) => {
+      const renderExplanation = () => {
         let text = '';
         let origin = '';
-        if (selectedLanguage === 'fr') {
+        if (language === 'fr') {
           text = interaction.summary_fr || interaction.summary_en || '';
-        } else if (selectedLanguage === 'fon') {
+        } else if (language === 'fon') {
           if (typeof interaction.summary_fon_human === 'string' &&
               interaction.summary_fon_human.trim()) {
             text = interaction.summary_fon_human;
@@ -537,9 +537,8 @@ function renderResult(result, isSample = false) {
         provenance.textContent = origin;
         provenance.hidden = !origin;
       };
-      renderExplanation(languageSelect.value);
-      languageSelect.addEventListener('change', () => renderExplanation(languageSelect.value));
-      item.append(languageSelect, explanation, provenance);
+      renderExplanation();
+      item.append(explanation, provenance);
 
       const source = safeSourceLink(
         interaction.source_url || interaction.source?.url,
@@ -644,11 +643,19 @@ function startPolling(job) {
           return;
         }
         setProgress('sending');
-        const upload = await fetchTimeout(`${RELAY}/upload`, {
-          method: 'POST',
-          headers: relayHeaders({ 'Content-Type': 'image/jpeg' }),
-          body: job.blob,
-        }, 30000);
+        const wakeupTimer = setTimeout(() => {
+          if (activeJob === job) $('status-title').textContent = t('serverWakingUp');
+        }, 8000);
+        let upload;
+        try {
+          upload = await fetchTimeout(`${RELAY}/upload`, {
+            method: 'POST',
+            headers: relayHeaders({ 'Content-Type': 'image/jpeg' }),
+            body: job.blob,
+          }, 30000);
+        } finally {
+          clearTimeout(wakeupTimer);
+        }
         if (upload.status === 401) {
           requestDemoAccess();
           return;
@@ -851,6 +858,11 @@ async function resumePendingJob() {
 }
 
 async function initialize() {
+  if ('IntersectionObserver' in window) {
+    stickyCtaObserver = new IntersectionObserver(([entry]) => {
+      $('new-btn').classList.toggle('is-sticky', entry.isIntersecting);
+    });
+  }
   $('debug-relay').hidden = !DEBUG_RELAY;
   try {
     demoAccessCode = sessionStorage.getItem('pharmaclear:demo-access-code') || '';
