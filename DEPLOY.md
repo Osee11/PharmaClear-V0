@@ -41,6 +41,20 @@ internal relay credential. Other optional runtime settings include
    The relay is loopback-only inside the container; Render's public service
    exposes Node, not the C port.
 
+### Render: exact settings
+
+- **Runtime:** Docker.
+- **Dockerfile path / build context:** repository root `Dockerfile` / repository root.
+- **Health check path:** `/api/health`.
+- **Runtime variables to configure:** `MODEL_API_KEY`, `DEMO_ACCESS_CODE`,
+  `RELAY_TOKEN` or `PHARMA_TOKEN`, `INTERNAL_RELAY_TOKEN` or
+  `PHARMA_NODE_TOKEN`, `DAILY_ANALYSIS_LIMIT`, `API_RATE_LIMIT`, `FON_MT`,
+  `TRUST_PROXY`, `CORS_ORIGIN`, and `PHARMA_MOCK`. Render supplies `PORT`.
+
+The Render free tier sleeps after 15 minutes without traffic and can take about
+one minute to wake. The daily counter in `runtime/` resets when the instance
+restarts, so it is not a persistent daily quota on the free tier.
+
 Render's default filesystem is ephemeral. In particular, the daily-analysis
 counter in `runtime/` is **not persistent**: it resets when the container is
 replaced or restarted, so it is not a durable global daily quota. A Render

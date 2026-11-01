@@ -24,8 +24,13 @@ test('all locale files are valid UTF-8 JSON and static page keys exist in Englis
   }
   const html = fs.readFileSync(path.join(publicDirectory, 'index.html'), 'utf8');
   const english = require('../public/i18n/en.json');
+  const french = require('../public/i18n/fr.json');
+  const fon = require('../public/i18n/fon.json');
   const keys = [...new Set([...html.matchAll(/data-i18n="([^"]+)"/g)].map((match) => match[1]))];
   assert.deepEqual(keys.filter((key) => !(key in english)), []);
+  assert.equal(english.serverWakingUp, 'Server waking up…');
+  assert.equal(french.serverWakingUp, 'Le serveur se réveille…');
+  assert.equal(fon.serverWakingUp, '');
 });
 
 function createRenderer(language = 'en') {
