@@ -1,13 +1,50 @@
 # PharmaClear
 
+## Try it in 60 seconds
+
+Demo URL: `<DEPLOY_URL>`  
+Demo access code: `<DEMO_CODE>`
+
+1. Open the demo URL and enter the demo access code.
+2. Choose a prescription photo, or use the [synthetic sample prescription](./public/samples/sample-prescription.png).
+3. Wait for the transcription and interaction-table check.
+4. Compare every displayed name with the original prescription and ask a pharmacist if anything is unclear.
+
+## Results
+
+Run the evaluation to generate [`eval/results.md`](./eval/results.md). Replace these placeholders only with values from that report.
+
+| Evaluation set | Images | Correct | Uncertain | False-confident | Missed | Mean time |
+|---|---:|---:|---:|---:|---:|---:|
+| TBD – run eval | TBD – run eval | TBD – run eval | TBD – run eval | TBD – run eval | TBD – run eval | TBD – run eval |
+
+## Known limits
+
+- The model's confidence is self-reported and has not been calibrated.
+- The interaction table contains only five pairs and has not been reviewed by a pharmacist.
+- Brand names are not recognized; matching is by supported generic names.
+- The sample is synthetic and the prototype is not clinically validated.
+- Fon includes human-written interface text and five human-written interaction summaries; automatic translation is only a labelled fallback.
+- Online access is required for analysis; offline photos wait on the phone, and iOS may require reopening the app to upload.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  PWA[Patient PWA] -->|HTTPS upload and result| Node[Node API and relay proxy]
+  Node -->|Queue/status requests| RelayC[C relay]
+  RelayC -->|Queued image with internal token| Node
+  Node -->|Prescription transcription| Meta[Meta Responses API]
+  Node <-->|Deterministic pair lookup| Interactions[(Local interaction table)]
+  Node --> PWA
+```
+
 PharmaClear is a prototype that transcribes prescription images and makes
 uncertainty visible. It does not prescribe, diagnose, or establish that a
 medicine combination is safe.
 
 > **Prototype, not clinically validated.** Always compare every reading with
 > the original prescription and ask a pharmacist when anything is unclear.
-
-**Demo:** Not publicly deployed yet; no public demo URL is configured.
 
 ## What it does
 
@@ -30,19 +67,6 @@ Fon explanations written by a speaker are shown only for documented alerts
 and are labelled **“Written by a Fon speaker.”** Automatic Fon translation is
 only a fallback, is labelled **“Machine translation, please verify,”** and can
 be disabled with `FON_MT=0`.
-
-## Architecture
-
-```text
-Patient PWA
-  ├─ IndexedDB photo queue when offline
-  └─ HTTPS → Node.js API / same-origin relay proxy
-                 ├─ per-IP request limit and daily analysis cap
-                 ├─ C relay → disk queue → Node transcription
-                 └─ Meta Responses API (transcription only)
-
-Pharmacy counter → local C relay → Node.js → Meta Responses API
-```
 
 The Meta model transcribes the image; it is not the authority for interactions.
 The model configured and tested in this repository is `muse-wonder-1.0` at
@@ -135,9 +159,10 @@ and must never be copied into production data.
 
 ## Reliability evaluation
 
-`eval/ground-truth.json` contains one synthetic case with expected medicine
-names. `eval/images/` is Git-ignored; copy the public synthetic sample there
-before running:
+`eval/ground-truth.json` contains cases with expected medicine names.
+`eval/images/` is Git-ignored; place the matching fictional image files there
+before running. The evaluation writes a Markdown table and summary to
+[`eval/results.md`](./eval/results.md):
 
 ```sh
 mkdir -p eval/images
@@ -152,24 +177,6 @@ node eval/run-eval.js --only sample-ibuprofen-aspirin
 node eval/run-eval.js --format csv
 node eval/run-eval.js --format markdown
 ```
-
-### Results
-
-| Evaluation set | Images | Correct names | Uncertain | False with confidence | Missed | Errors | Mean time |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Synthetic printed sample | 1 | 2 | 0 | 0 | 0 | 0 | 4.4 s |
-
-This is the measured result of one clean, synthetic printed image—not an
-estimate of accuracy on real, handwritten, or patient prescriptions.
-
-### Known limits
-
-| Limit | Current status |
-|---|---|
-| Interaction coverage | Five pairs from one US FDA-listed ibuprofen label; not reviewed by a pharmacist. |
-| OCR reliability | Measured on 1 synthetic printed image only; no real-prescription accuracy claim. |
-| Network | OCR analysis requires an online connection; offline photos wait locally for upload. |
-| iOS background upload | Background Sync is not implemented; reopening the app may be required. |
 
 See [`eval/README.md`](./eval/README.md) for the ground-truth format and
 evaluation options.
