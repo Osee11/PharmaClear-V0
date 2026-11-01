@@ -21,6 +21,14 @@ function namesFrom(items) {
     : [];
 }
 
+function displayNames(items) {
+  return Array.isArray(items)
+    ? items
+      .map((item) => item && typeof item.name === 'string' ? item.name.trim() : '')
+      .filter(Boolean)
+    : [];
+}
+
 function scoreResult(expectedNames, result) {
   const expected = [...new Set(expectedNames.map(normalizeName).filter(Boolean))];
   const detected = namesFrom(result && result.detected_drugs);
@@ -32,7 +40,13 @@ function scoreResult(expectedNames, result) {
     !detectedSet.has(name) && uncertainSet.has(name));
   const missed = expected.filter((name) =>
     !detectedSet.has(name) && !uncertainSet.has(name));
-  const falseConfident = detected.filter((name) => !expected.includes(name));
+  const falseConfident = Array.isArray(result && result.detected_drugs)
+    ? result.detected_drugs
+      .filter((item) => item && typeof item.confidence === 'number' &&
+        item.confidence >= 0.7 && !expected.includes(normalizeName(item.name)))
+      .map((item) => normalizeName(item.name))
+      .filter(Boolean)
+    : [];
   const overlapping = expected.filter((name) =>
     detectedSet.has(name) && uncertainSet.has(name));
 
@@ -147,16 +161,35 @@ function formatCsv(rows, summary) {
 }
 
 function formatMarkdown(rows, summary) {
+  const cell = (value) => String(value ?? '')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, '<br>');
+  const orderedRows = [...rows].sort((first, second) =>
+    Number(second.false_with_confidence > 0) - Number(first.false_with_confidence > 0));
   const lines = [
-    '| ID | Image | Correct | Uncertain | False with confidence | Missed | Status | Seconds |',
-    '|---|---|---:|---:|---:|---:|---|---:|',
-    ...rows.map((row) =>
-      `| ${row.id} | ${row.image} | ${row.correct} | ${row.uncertain} | ` +
-      `${row.false_with_confidence} | ${row.missed} | ${row.status.replace(/\|/g, '\\|')} | ${row.seconds} |`),
+    '# Reliability evaluation',
     '',
-    summaryLine(summary),
+    '| Case | Expected | Detected | Uncertain | Verdict |',
+    '|---|---|---|---|---|',
+    ...orderedRows.map((row) => `| ${cell(row.id)} | ${cell((row.expectedNames || []).join(', '))} | ` +
+      `${cell((row.detectedNames || []).join(', '))} | ` +
+      `${cell((row.uncertainNames || []).join(', '))} | ${cell(row.verdict || row.status)} |`),
+    '',
+    '## Totals',
+    '',
+    `- Correct: ${summary.correct}`,
+    `- Uncertain: ${summary.uncertain}`,
+    `- False-confident: ${summary.falseWithConfidence}`,
+    `- Missed: ${summary.missed}`,
+    `- Errors: ${summary.errors}`,
+    `- Mean time: ${summary.meanSeconds.toFixed(1)} s`,
   ];
   return `${lines.join('\n')}\n`;
+}
+
+async function writeMarkdownReport(rows, summary, reportPath = path.join(EVAL_DIR, 'results.md')) {
+  await fs.writeFile(reportPath, formatMarkdown(rows, summary), 'utf8');
+  return reportPath;
 }
 
 function printReport(rows, summary, format, manualReview) {
@@ -215,12 +248,22 @@ async function run(options = {}) {
       const row = {
         id: item.id,
         image: item.image,
+        expectedNames: item.expected,
+        detectedNames: displayNames(result.detected_drugs),
+        uncertainNames: displayNames(result.uncertain),
         correct: scores.correct.length,
         uncertain: scores.uncertain.length,
         false_with_confidence: scores.falseConfident.length,
         missed: scores.missed.length,
         seconds: (elapsedMs / 1000).toFixed(1),
         status: result.status || 'unknown',
+        verdict: scores.falseConfident.length
+          ? 'FALSE-CONFIDENT'
+          : scores.uncertain.length
+            ? 'UNCERTAIN'
+            : scores.missed.length
+              ? 'MISSED'
+              : 'CORRECT',
       };
       rows.push(row);
       if (scores.ambiguous.length || scores.uncertain.length) {
@@ -237,12 +280,16 @@ async function run(options = {}) {
       rows.push({
         id: item.id,
         image: item.image,
+        expectedNames: item.expected,
+        detectedNames: [],
+        uncertainNames: [],
         correct: 0,
         uncertain: 0,
         false_with_confidence: 0,
         missed: item.expected.length,
         seconds: (elapsedMs / 1000).toFixed(1),
         status: `ERROR: ${error.message}`,
+        verdict: `ERROR: ${error.message}`,
       });
       errorsTotal++;
       manualReview.push({ id: item.id, image: item.image, error: error.message });
@@ -258,7 +305,11 @@ async function run(options = {}) {
     errors: errorsTotal,
     meanSeconds: attempted ? elapsedTotal / attempted / 1000 : 0,
   };
+  rows.sort((first, second) =>
+    Number(second.false_with_confidence > 0) - Number(first.false_with_confidence > 0));
+  await writeMarkdownReport(rows, summary);
   printReport(rows, summary, options.format || 'table', manualReview);
+  console.log('Saved eval/results.md');
   return { rows, summary, manualReview };
 }
 
@@ -287,4 +338,5 @@ module.exports = {
   selectCases,
   formatCsv,
   formatMarkdown,
+  writeMarkdownReport,
 };

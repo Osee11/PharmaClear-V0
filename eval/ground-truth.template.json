@@ -1,0 +1,23 @@
+{
+  "_comment": "Template only. Replace TEST-ONLY names with exact transcriptions and remove each _comment field if desired.",
+  "cases": [
+    {
+      "id": "cas-01",
+      "image": "cas-01.jpg",
+      "expected": ["TEST-ONLY-DRUG-A"],
+      "_comment": "One fictional medicine name."
+    },
+    {
+      "id": "cas-02",
+      "image": "cas-02.jpg",
+      "expected": ["TEST-ONLY-DRUG-B", "TEST-ONLY-DRUG-C"],
+      "_comment": "Two fictional medicine names."
+    },
+    {
+      "id": "cas-03",
+      "image": "cas-03.jpg",
+      "expected": ["TEST-ONLY-DRUG-D"],
+      "_comment": "A third fictional case; use only names visible on its synthetic image."
+    }
+  ]
+}
