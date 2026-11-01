@@ -8,6 +8,7 @@ const JPEG_QUALITY = 0.85;
 const POLL_MS = 2000;
 const STORAGE_KEY = 'pharmaclear:lastId';
 const THUMB_KEY = 'pharmaclear:lastThumb';
+const ACCESS_CODE_KEY = 'pharmaclear:demo-access-code';
 const THUMB_SIDE = 700;
 const JOB_DB = 'pharmaclear';
 const JOB_STORE = 'pending';
@@ -85,17 +86,33 @@ async function checkDemoAccess(code) {
   return response.json();
 }
 
-async function submitDemoAccess() {
-  const code = $('access-code').value.trim();
+function captureUrlDemoAccessCode() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('code')) return null;
+  const code = url.searchParams.get('code') || '';
+  try {
+    sessionStorage.setItem(ACCESS_CODE_KEY, code);
+  } catch (error) {
+    console.error('Could not store demo access code for this session:', error);
+  }
+  url.searchParams.delete('code');
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  return code;
+}
+
+async function submitDemoAccess(code = $('access-code').value.trim()) {
   try {
     const access = await checkDemoAccess(code);
     if (!access.authorized) {
+      demoAccessCode = '';
+      try { sessionStorage.removeItem(ACCESS_CODE_KEY); } catch (error) { /* session only */ }
+      show('access-panel', true);
       $('access-error').textContent = t('accessInvalid');
       show('access-error', true);
       return;
     }
     demoAccessCode = code;
-    try { sessionStorage.setItem('pharmaclear:demo-access-code', code); } catch (error) { /* session only */ }
+    try { sessionStorage.setItem(ACCESS_CODE_KEY, code); } catch (error) { /* session only */ }
     show('access-panel', false);
     show('access-error', false);
     if (activeJob) {
@@ -104,8 +121,28 @@ async function submitDemoAccess() {
     }
   } catch (error) {
     console.error('Could not validate demo access code:', error);
+    show('access-panel', true);
     $('access-error').textContent = t('errorUnexpected');
     show('access-error', true);
+  }
+}
+
+async function initializeDemoAccess(urlCode = captureUrlDemoAccessCode()) {
+  try {
+    demoAccessCode = sessionStorage.getItem(ACCESS_CODE_KEY) || '';
+  } catch (error) {
+    demoAccessCode = '';
+  }
+  if (urlCode !== null) demoAccessCode = urlCode;
+  if (demoAccessCode) {
+    await submitDemoAccess(demoAccessCode);
+    return;
+  }
+  try {
+    const access = await checkDemoAccess('');
+    show('access-panel', access.required && !access.authorized);
+  } catch (error) {
+    console.error('Could not check demo access requirement:', error);
   }
 }
 
@@ -1262,15 +1299,13 @@ async function resumePendingJob() {
 }
 
 async function initialize() {
+  const urlCode = captureUrlDemoAccessCode();
   if ('IntersectionObserver' in window) {
     stickyCtaObserver = new IntersectionObserver(([entry]) => {
       $('result-actions').classList.toggle('is-sticky', entry.isIntersecting);
     });
   }
   $('debug-relay').hidden = !DEBUG_RELAY;
-  try {
-    demoAccessCode = sessionStorage.getItem('pharmaclear:demo-access-code') || '';
-  } catch (error) { /* demo code is session-scoped */ }
   const savedLanguage = (() => {
     try { return localStorage.getItem('pharmaclear:language'); } catch (error) { return null; }
   })();
@@ -1285,12 +1320,7 @@ async function initialize() {
     show('error', true);
   }
 
-  try {
-    const access = await checkDemoAccess(demoAccessCode);
-    show('access-panel', access.required && !access.authorized);
-  } catch (error) {
-    console.error('Could not check demo access requirement:', error);
-  }
+  await initializeDemoAccess(urlCode);
   $('cam').addEventListener('change', (event) => handleFile(event.target.files[0]));
   $('gal').addEventListener('change', (event) => handleFile(event.target.files[0]));
   $('thumb-preview').addEventListener('click', openPhotoViewer);

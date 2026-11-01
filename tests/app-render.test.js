@@ -16,6 +16,8 @@ const showResultStart = renderEnd + 1;
 const showResultEnd = appSource.indexOf('\nfunction startPolling(', showResultStart);
 const sampleStart = appSource.indexOf('async function handleSample() {');
 const sampleEnd = appSource.indexOf('\nasync function resetAll()', sampleStart);
+const accessStart = appSource.indexOf('async function checkDemoAccess(');
+const accessEnd = appSource.indexOf('\nfunction requestDemoAccess()', accessStart);
 const releasePreviewStart = appSource.indexOf('function releasePhotoPreview() {');
 const releasePreviewEnd = appSource.indexOf('\nfunction setPhotoPreview(', releasePreviewStart);
 const showStepStart = appSource.indexOf('function showStep(');
@@ -146,6 +148,63 @@ function createRenderer(language = 'en') {
   );
   return dom;
 }
+
+function createAccessHarness(url, validCode) {
+  const dom = new JSDOM(
+    '<!doctype html><html><body>' +
+      '<section id="access-panel" hidden></section>' +
+      '<p id="access-error" hidden></p>' +
+      '<input id="access-code">' +
+    '</body></html>',
+    { runScripts: 'outside-only', url },
+  );
+  const { window } = dom;
+  window.console = { error() {} };
+  window.fetch = async (path, options = {}) => {
+    assert.equal(path, '/api/access');
+    const sentCode = options.headers?.['X-Demo-Access-Code'] || '';
+    return {
+      ok: true,
+      json: async () => ({ required: true, authorized: sentCode === validCode }),
+    };
+  };
+  window.eval(
+    `const ACCESS_CODE_KEY = 'pharmaclear:demo-access-code';` +
+    `let demoAccessCode = ''; let activeJob = null;` +
+    `function $(id) { return document.getElementById(id); }` +
+    `function show(id, visible) { $(id).hidden = !visible; }` +
+    `function t(key) { return key; }` +
+    `function showStep() {} function startPolling() {}` +
+    appSource.slice(accessStart, accessEnd) +
+    `window.initializeDemoAccess = initializeDemoAccess;`,
+  );
+  return dom;
+}
+
+test('valid URL access code unlocks the app and is removed from the address', async (t) => {
+  const dom = createAccessHarness('https://pharmaclear.test/?code=valid-demo&keep=1#home', 'valid-demo');
+  t.after(() => dom.window.close());
+  const { window } = dom;
+
+  await window.initializeDemoAccess();
+
+  assert.equal(window.document.getElementById('access-panel').hidden, true);
+  assert.equal(window.sessionStorage.getItem('pharmaclear:demo-access-code'), 'valid-demo');
+  assert.equal(window.location.href, 'https://pharmaclear.test/?keep=1#home');
+});
+
+test('invalid URL access code shows the entry form, removes the stored code, and clears the address', async (t) => {
+  const dom = createAccessHarness('https://pharmaclear.test/?code=wrong-demo&keep=1', 'valid-demo');
+  t.after(() => dom.window.close());
+  const { window } = dom;
+
+  await window.initializeDemoAccess();
+
+  assert.equal(window.document.getElementById('access-panel').hidden, false);
+  assert.equal(window.document.getElementById('access-error').textContent, 'accessInvalid');
+  assert.equal(window.sessionStorage.getItem('pharmaclear:demo-access-code'), null);
+  assert.equal(window.location.href, 'https://pharmaclear.test/?keep=1');
+});
 
 const renderCases = [
   ['error result', { status: 'error', error: 'Synthetic test error.' }],
