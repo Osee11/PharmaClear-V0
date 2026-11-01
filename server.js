@@ -8,29 +8,43 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const { createDailyAnalysisLimiter } = require('./daily-limit');
+const { addAiInteractionSuggestions } = require('./ai-interactions');
 const {
   analyzePrescription,
+  suggestDrugInteractions,
   translateInteractionSummaryToFon,
   UpstreamError,
   ModelOutputError,
   CONFIG,
 } = require('./meta');
-const { addFonSummaries, checkDrugInteractions } = require('./interactions');
+const {
+  addFonSummaries,
+  checkDrugInteraction,
+  checkDrugInteractions,
+} = require('./interactions');
 
 const PORT = Number(process.env.PORT) || 3000;
 const RATE_LIMIT = Math.max(1, Number(process.env.API_RATE_LIMIT) || 20);
 const DAILY_ANALYSIS_LIMIT = process.env.DAILY_ANALYSIS_LIMIT === undefined
   ? 100
   : Number(process.env.DAILY_ANALYSIS_LIMIT);
+const DAILY_AI_INTERACTION_LIMIT = process.env.DAILY_AI_INTERACTION_LIMIT === undefined
+  ? 200
+  : Number(process.env.DAILY_AI_INTERACTION_LIMIT);
 const RATE_WINDOW_MS = 60 * 1000;
 const RELAY_URL = (process.env.RELAY_URL || 'http://127.0.0.1:8080').replace(/\/+$/, '');
 const RELAY_TOKEN = process.env.RELAY_TOKEN || '';
 const INTERNAL_RELAY_TOKEN = process.env.INTERNAL_RELAY_TOKEN || '';
 const DEMO_ACCESS_CODE = process.env.DEMO_ACCESS_CODE || '';
 const DAILY_USAGE_FILE = path.join(__dirname, 'runtime', 'daily-analysis-usage.json');
+const DAILY_AI_INTERACTION_USAGE_FILE = path.join(__dirname, 'runtime', 'daily-ai-interaction-usage.json');
 const dailyAnalysisLimiter = createDailyAnalysisLimiter({
   limit: DAILY_ANALYSIS_LIMIT,
   filePath: DAILY_USAGE_FILE,
+});
+const dailyAiInteractionLimiter = createDailyAnalysisLimiter({
+  limit: DAILY_AI_INTERACTION_LIMIT,
+  filePath: DAILY_AI_INTERACTION_USAGE_FILE,
 });
 const TLS_CERT_FILE = process.env.TLS_CERT_FILE || '';
 const TLS_KEY_FILE = process.env.TLS_KEY_FILE || '';
@@ -39,6 +53,9 @@ const MOCK = process.env.PHARMA_MOCK === '1' || !CONFIG.apiKey;
 
 if (!Number.isSafeInteger(DAILY_ANALYSIS_LIMIT) || DAILY_ANALYSIS_LIMIT < 0) {
   throw new Error('DAILY_ANALYSIS_LIMIT must be a non-negative integer');
+}
+if (!Number.isSafeInteger(DAILY_AI_INTERACTION_LIMIT) || DAILY_AI_INTERACTION_LIMIT < 0) {
+  throw new Error('DAILY_AI_INTERACTION_LIMIT must be a non-negative integer');
 }
 if (INTERNAL_RELAY_TOKEN &&
     !/^[A-Za-z0-9._~-]{16,128}$/.test(INTERNAL_RELAY_TOKEN)) {
@@ -178,8 +195,8 @@ async function mockResult() {
     image_quality: 'good',
     notes: 'Synthetic TEST ONLY values; this is not a reading of the uploaded photo.',
     detected_drugs: [
-      { name: 'TEST-ONLY-ALPHA', dosage: null, frequency: null, duration: null },
-      { name: 'TEST-ONLY-BETA', dosage: null, frequency: null, duration: null },
+      { name: 'TEST-ONLY-ALPHA', dosage: null, frequency: null, duration: null, confidence: 0.9 },
+      { name: 'TEST-ONLY-BETA', dosage: null, frequency: null, duration: null, confidence: 0.9 },
     ],
     uncertain: [
       { name: 'TEST-ONLY-UNCERTAIN', dosage: null, frequency: null, duration: null },
@@ -249,6 +266,15 @@ app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
     reservation = dailySlot.reservation;
     if (MOCK) {
       const result = await mockResult();
+      result.ai_suggested_interactions = await addAiInteractionSuggestions({
+        detectedDrugs: result.detected_drugs,
+        documentedInteractions: result.interactions,
+        documentedPairChecker: checkDrugInteraction,
+        dailyLimiter: dailyAiInteractionLimiter,
+        suggest: suggestDrugInteractions,
+        mock: true,
+        limit: DAILY_AI_INTERACTION_LIMIT,
+      });
       analysisCompleted = true;
       return res.json(result);
     }
@@ -260,12 +286,21 @@ app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
       translateInteractionSummaryToFon,
       (error) => console.error('Fon translation unavailable for a verified interaction:', error.message),
     );
+    const aiSuggestions = await addAiInteractionSuggestions({
+      detectedDrugs: result.detected_drugs,
+      documentedInteractions: interactions.checks,
+      documentedPairChecker: checkDrugInteraction,
+      dailyLimiter: dailyAiInteractionLimiter,
+      suggest: suggestDrugInteractions,
+      limit: DAILY_AI_INTERACTION_LIMIT,
+    });
     console.log(`Analyse terminée : ${result.detected_drugs.length} lu(s), ${result.uncertain.length} à vérifier`);
     analysisCompleted = true;
     return res.json({
       ...result,
       interaction_status: interactions.status,
       interactions: checks,
+      ai_suggested_interactions: aiSuggestions,
     });
   } catch (e) {
     if (e instanceof UpstreamError) {

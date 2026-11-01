@@ -6,7 +6,10 @@ const {
   addFonSummaries,
   checkDrugInteractions,
   createInteractionChecker,
+  selectConfidentDrugs,
+  validateAiInteractionSuggestions,
 } = require('../interactions');
+const { addAiInteractionSuggestions } = require('../ai-interactions');
 const fixture = require('./fixtures/interactions.json');
 
 const fixtureChecker = createInteractionChecker(fixture);
@@ -196,4 +199,179 @@ test('invalid input and missing required summaries are rejected', async () => {
     ...fixture,
     pairs: [{ ...fixture.pairs[0], summary_fr: '' }],
   }), /summary_en\/summary_fr/);
+});
+
+test('AI interaction suggestions accept only strict JSON pairs from the submitted names', () => {
+  const valid = JSON.stringify({
+    pairs: [{
+      a: 'TEST-ONLY-ALPHA',
+      b: 'TEST-ONLY-BETA',
+      severity: 'caution',
+      summary_en: 'TEST ONLY: Synthetic summary.',
+      summary_fr: 'TEST UNIQUEMENT : résumé synthétique.',
+    }],
+  });
+  const [suggestion] = validateAiInteractionSuggestions(
+    valid,
+    ['TEST-ONLY-ALPHA', 'TEST-ONLY-BETA'],
+  );
+  assert.equal(suggestion.status, 'ai_suggested');
+  assert.equal(suggestion.source, 'model');
+  assert.equal(suggestion.review_status, 'ai_unverified');
+  assert.equal(suggestion.source_url, undefined);
+  assert.equal(validateAiInteractionSuggestions(
+    valid.replace('TEST-ONLY-BETA', 'OUTSIDE-LIST'),
+    ['TEST-ONLY-ALPHA', 'TEST-ONLY-BETA'],
+  ).length, 0);
+  assert.deepEqual(validateAiInteractionSuggestions(`${valid} trailing`, [
+    'TEST-ONLY-ALPHA',
+    'TEST-ONLY-BETA',
+  ]), []);
+});
+
+test('AI interaction validation rejects unsafe phrasing, excessive summaries, and invalid schemas', () => {
+  const makeResponse = (summary) => JSON.stringify({
+    pairs: [{
+      a: 'TEST-ONLY-ALPHA',
+      b: 'TEST-ONLY-BETA',
+      severity: 'monitor',
+      summary_en: summary,
+      summary_fr: 'TEST UNIQUEMENT.',
+    }],
+  });
+  const names = ['TEST-ONLY-ALPHA', 'TEST-ONLY-BETA'];
+  assert.deepEqual(validateAiInteractionSuggestions(
+    makeResponse('This combination is safe.'),
+    names,
+  ), []);
+  assert.deepEqual(validateAiInteractionSuggestions(
+    makeResponse('First. Second. Third.'),
+    names,
+  ), []);
+  const invalidEnum = JSON.parse(makeResponse('TEST ONLY.').replace('"monitor"', '"critical"'));
+  assert.deepEqual(validateAiInteractionSuggestions(JSON.stringify(invalidEnum), names), []);
+});
+
+test('AI suggestions are deduplicated against documented pairs and duplicate model pairs', () => {
+  const duplicate = {
+    a: 'TEST-ONLY-ALPHA',
+    b: 'TEST-ONLY-BETA',
+    severity: 'caution',
+    summary_en: 'TEST ONLY: Summary.',
+    summary_fr: 'TEST UNIQUEMENT : résumé.',
+  };
+  const documented = [{
+    status: 'verified',
+    drug_a: 'TEST-ONLY-ALPHA',
+    drug_b: 'TEST-ONLY-BETA',
+  }];
+  const result = validateAiInteractionSuggestions(JSON.stringify({
+    pairs: [duplicate, { ...duplicate, a: 'TEST-ONLY-BETA', b: 'TEST-ONLY-ALPHA' }],
+  }), ['TEST-ONLY-ALPHA', 'TEST-ONLY-BETA'], documented);
+  assert.deepEqual(result, []);
+});
+
+test('only confident detected medicines are selected, sorted by confidence, and capped at eight', () => {
+  const drugs = Array.from({ length: 10 }, (_, index) => ({
+    name: `TEST-ONLY-${index}`,
+    confidence: 0.7 + index / 100,
+  }));
+  const selected = selectConfidentDrugs(drugs);
+  assert.equal(selected.length, 8);
+  assert.equal(selected[0].name, 'TEST-ONLY-9');
+  assert.equal(selectConfidentDrugs([{ name: 'TEST-ONLY-LOW', confidence: 0.69 }]).length, 0);
+});
+
+test('AI failure or invalid JSON leaves level-one interactions unchanged', async () => {
+  const levelOne = [{ status: 'not_verified', drug_a: 'TEST-ONLY-ALPHA', drug_b: 'TEST-ONLY-BETA' }];
+  let calls = 0;
+  const result = await addAiInteractionSuggestions({
+    detectedDrugs: [
+      { name: 'TEST-ONLY-ALPHA', confidence: 0.9 },
+      { name: 'TEST-ONLY-BETA', confidence: 0.8 },
+    ],
+    documentedInteractions: levelOne,
+    dailyLimiter: { consume: async () => ({ allowed: true }) },
+    suggest: async () => { calls++; return 'not-json'; },
+    onError: assert.fail,
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(result, []);
+  assert.deepEqual(levelOne, [{
+    status: 'not_verified',
+    drug_a: 'TEST-ONLY-ALPHA',
+    drug_b: 'TEST-ONLY-BETA',
+  }]);
+});
+
+test('fewer than two confident medicines skip the AI call and the separate quota', async () => {
+  let calls = 0;
+  const result = await addAiInteractionSuggestions({
+    detectedDrugs: [{ name: 'TEST-ONLY-ALPHA', confidence: 0.9 }],
+    documentedInteractions: [],
+    dailyLimiter: { consume: async () => { calls++; return { allowed: true }; } },
+    suggest: async () => { calls++; return '{"pairs":[]}'; },
+  });
+  assert.deepEqual(result, []);
+  assert.equal(calls, 0);
+});
+
+test('mock mode returns one explicitly simulated suggestion without calling the model', async () => {
+  let modelCalls = 0;
+  let quotaCalls = 0;
+  const result = await addAiInteractionSuggestions({
+    detectedDrugs: [
+      { name: 'TEST-ONLY-ALPHA', confidence: 0.9 },
+      { name: 'TEST-ONLY-BETA', confidence: 0.8 },
+    ],
+    documentedInteractions: [],
+    dailyLimiter: { consume: async () => { quotaCalls++; return { allowed: true }; } },
+    suggest: async () => { modelCalls++; return '{"pairs":[]}'; },
+    mock: true,
+  });
+  assert.equal(modelCalls, 0);
+  assert.equal(quotaCalls, 1);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].simulated, true);
+  assert.equal(result[0].review_status, 'ai_unverified');
+  assert.equal(result[0].source, 'model');
+  assert.equal(result[0].source_url, undefined);
+});
+
+test('AI daily limit blocks suggestions without modifying documented results', async () => {
+  let modelCalls = 0;
+  const levelOne = [{ status: 'verified', drug_a: 'TEST-ONLY-A', drug_b: 'TEST-ONLY-B' }];
+  const result = await addAiInteractionSuggestions({
+    detectedDrugs: [
+      { name: 'TEST-ONLY-A', confidence: 0.9 },
+      { name: 'TEST-ONLY-B', confidence: 0.8 },
+      { name: 'TEST-ONLY-C', confidence: 0.7 },
+    ],
+    documentedInteractions: levelOne,
+    dailyLimiter: { consume: async () => ({ allowed: false }) },
+    suggest: async () => { modelCalls++; return '{"pairs":[]}'; },
+  });
+  assert.deepEqual(result, []);
+  assert.equal(modelCalls, 0);
+  assert.deepEqual(levelOne, [{ status: 'verified', drug_a: 'TEST-ONLY-A', drug_b: 'TEST-ONLY-B' }]);
+});
+
+test('AI suggestions skip pairs documented under canonical names', async () => {
+  let quotaCalls = 0;
+  const result = await addAiInteractionSuggestions({
+    detectedDrugs: [
+      { name: 'TEST-ONLY-BRAND-A', confidence: 0.9 },
+      { name: 'TEST-ONLY-BRAND-B', confidence: 0.8 },
+    ],
+    documentedInteractions: [],
+    documentedPairChecker: async () => ({
+      status: 'verified',
+      drug_a: 'TEST-ONLY-GENERIC-A',
+      drug_b: 'TEST-ONLY-GENERIC-B',
+    }),
+    dailyLimiter: { consume: async () => { quotaCalls++; return { allowed: true }; } },
+    suggest: async () => { assert.fail('Covered pairs must not be sent to the model'); },
+  });
+  assert.deepEqual(result, []);
+  assert.equal(quotaCalls, 0);
 });

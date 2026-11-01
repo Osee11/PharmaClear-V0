@@ -50,6 +50,10 @@
       <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/>
       <path d="M12 11v5m0-8h.01" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2"/>
     </symbol>
+    <symbol id="icon-ai" viewBox="0 0 24 24">
+      <path d="m12 2 1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8L12 2Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.7"/>
+      <path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.5"/>
+    </symbol>
     <symbol id="icon-pill" viewBox="0 0 24 24">
       <path d="M8 4.5a5 5 0 0 0-3.5 8.6l6.4 6.4a5 5 0 0 0 7.1-7.1l-6.4-6.4A5 5 0 0 0 8 4.5Z" fill="none" stroke="currentColor" stroke-width="1.8"/>
       <path d="m8 14 6-6" fill="none" stroke="currentColor" stroke-width="1.8"/>
@@ -59,6 +63,10 @@
     </symbol>
     <symbol id="icon-arrow" viewBox="0 0 24 24">
       <path d="M7 17 17 7M8 7h9v9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/>
+    </symbol>
+    <symbol id="icon-document" viewBox="0 0 24 24">
+      <path d="M6 3.5h8l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 20V5a1.5 1.5 0 0 1 1-1.5Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.8"/>
+      <path d="M14 3.5V8h4M8 12h8M8 15.5h8M8 19h5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"/>
     </symbol>
   </svg>
 
@@ -87,7 +95,9 @@
   </header>
 
   <main>
-    <img id="thumb" class="thumb" alt="Prescription image" hidden>
+    <button id="thumb-preview" class="thumb-preview" type="button" aria-label="Your prescription photo — tap to enlarge" hidden>
+      <img id="thumb" class="thumb" alt="">
+    </button>
 
     <section id="access-panel" class="panel access-panel" hidden>
       <h2 data-i18n="accessTitle">Demo access</h2>
@@ -166,12 +176,37 @@
       <div id="mock-banner" class="banner mock-banner" hidden></div>
       <div id="result-content"></div>
       <div id="new-btn-sentinel" aria-hidden="true"></div>
-      <button id="new-btn" class="btn btn-main scan-again" type="button" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#icon-camera"></use></svg>
-        <span data-i18n="newPrescription">Start a new prescription</span>
-      </button>
+      <div id="result-actions" class="result-actions" hidden>
+        <button id="new-btn" class="btn btn-main scan-again" type="button">
+          <svg class="icon" aria-hidden="true"><use href="#icon-camera"></use></svg>
+          <span data-i18n="newPrescription">Start a new prescription</span>
+        </button>
+        <button id="save-pdf-btn" class="btn btn-secondary save-pdf" type="button">
+          <svg class="icon" aria-hidden="true"><use href="#icon-document"></use></svg>
+          <span data-i18n="savePdf">Save as PDF</span>
+        </button>
+        <label id="include-photo-option" class="include-photo-option" hidden>
+          <input id="include-photo" type="checkbox">
+          <span data-i18n="includePhoto">Include prescription photo</span>
+        </label>
+      </div>
     </section>
   </main>
+
+  <section id="print-report" class="print-report" hidden aria-label="Printable prescription summary"></section>
+
+  <div id="photo-viewer" class="photo-viewer" role="dialog" aria-modal="true"
+       aria-labelledby="photo-viewer-title" tabindex="-1" hidden>
+    <h2 id="photo-viewer-title" class="photo-viewer-title" data-i18n="photoViewerTitle">Prescription photo</h2>
+    <button id="photo-viewer-close" class="photo-viewer-close" type="button"
+            aria-label="Close photo viewer" data-i18n-aria-label="closePhotoViewer">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor"
+              stroke-linecap="round" stroke-width="2"/>
+      </svg>
+    </button>
+    <img id="photo-viewer-image" class="photo-viewer-image" alt="">
+  </div>
 
   <footer class="page-footer">
     <p data-i18n="footerDisclaimer">Prototype, not clinically validated. Always check the original prescription with a pharmacist.</p>

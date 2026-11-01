@@ -25,6 +25,13 @@ let thumbObjectUrl = null;
 let demoAccessCode = '';
 let backendReachable = null;
 let stickyCtaObserver = null;
+let photoViewerOpener = null;
+let viewerPointers = new Map();
+let viewerScale = 1;
+let viewerTranslation = { x: 0, y: 0 };
+let viewerGestureStart = null;
+let lastViewerTap = 0;
+let suppressViewerTap = false;
 
 function t(key, values = {}) {
   const template = translations[key] || englishTranslations[key] || key;
@@ -37,8 +44,13 @@ function applyStaticTranslations() {
   document.querySelectorAll('[data-i18n]').forEach((node) => {
     node.textContent = t(node.dataset.i18n);
   });
+  document.querySelectorAll('[data-i18n-aria-label]').forEach((node) => {
+    node.setAttribute('aria-label', t(node.dataset.i18nAriaLabel));
+  });
   $('language-select').setAttribute('aria-label', t('languageLabel'));
-  $('thumb').alt = t('photoInstructions');
+  $('thumb').alt = t('photoAlt');
+  $('thumb-preview').setAttribute('aria-label', t('photoAlt'));
+  $('photo-viewer-image').alt = t('photoAlt');
 }
 
 async function setLanguage(nextLanguage) {
@@ -118,9 +130,163 @@ async function fetchTimeout(url, options = {}, ms = 10000) {
 function saveId(id) { try { localStorage.setItem(STORAGE_KEY, id); } catch (error) { /* optional recovery hint */ } }
 function loadId() { try { return localStorage.getItem(STORAGE_KEY); } catch (error) { return null; } }
 function clearId() { try { localStorage.removeItem(STORAGE_KEY); } catch (error) { /* optional recovery hint */ } }
-function saveThumb(value) { try { localStorage.setItem(THUMB_KEY, value); } catch (error) { /* optional preview */ } }
 function loadThumb() { try { return localStorage.getItem(THUMB_KEY); } catch (error) { return null; } }
 function clearThumb() { try { localStorage.removeItem(THUMB_KEY); } catch (error) { /* optional preview */ } }
+
+function releasePhotoPreview() {
+  if (thumbObjectUrl) URL.revokeObjectURL(thumbObjectUrl);
+  thumbObjectUrl = null;
+  $('thumb').removeAttribute('src');
+  show('thumb-preview', false);
+  if ($('include-photo-option')) {
+    show('include-photo-option', false);
+    $('include-photo').checked = false;
+  }
+}
+
+function setPhotoPreview(blob) {
+  releasePhotoPreview();
+  if (!blob) return;
+  thumbObjectUrl = URL.createObjectURL(blob);
+  $('thumb').src = thumbObjectUrl;
+  show('thumb-preview', true);
+}
+
+function updateViewerTransform() {
+  $('photo-viewer-image').style.transform =
+    `translate(${viewerTranslation.x}px, ${viewerTranslation.y}px) scale(${viewerScale})`;
+}
+
+function openPhotoViewer() {
+  if (!thumbObjectUrl) return;
+  photoViewerOpener = $('thumb-preview');
+  $('photo-viewer-image').src = thumbObjectUrl;
+  viewerScale = 1;
+  viewerTranslation = { x: 0, y: 0 };
+  viewerPointers.clear();
+  suppressViewerTap = false;
+  updateViewerTransform();
+  $('photo-viewer').hidden = false;
+  document.body.classList.add('photo-viewer-open');
+  $('photo-viewer-close').focus();
+}
+
+function closePhotoViewer(restoreFocus = true) {
+  const viewer = $('photo-viewer');
+  if (viewer.hidden) return;
+  viewer.hidden = true;
+  $('photo-viewer-image').removeAttribute('src');
+  document.body.classList.remove('photo-viewer-open');
+  viewerPointers.clear();
+  viewerGestureStart = null;
+  if (restoreFocus && photoViewerOpener && photoViewerOpener.isConnected) {
+    photoViewerOpener.focus();
+  }
+  photoViewerOpener = null;
+}
+
+function clampViewerScale(scale) {
+  return Math.min(4, Math.max(1, scale));
+}
+
+function viewerDistance(first, second) {
+  return Math.hypot(first.x - second.x, first.y - second.y);
+}
+
+function handleViewerPointerDown(event) {
+  event.preventDefault();
+  $('photo-viewer-image').setPointerCapture?.(event.pointerId);
+  viewerPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (viewerPointers.size === 1) {
+    viewerGestureStart = {
+      type: 'pan',
+      x: event.clientX,
+      y: event.clientY,
+      translation: { ...viewerTranslation },
+    };
+  } else if (viewerPointers.size === 2) {
+    suppressViewerTap = true;
+    const [first, second] = [...viewerPointers.values()];
+    viewerGestureStart = {
+      type: 'pinch',
+      distance: viewerDistance(first, second),
+      scale: viewerScale,
+    };
+  }
+}
+
+function handleViewerPointerMove(event) {
+  if (!viewerPointers.has(event.pointerId)) return;
+  viewerPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (viewerPointers.size >= 2 && viewerGestureStart?.type === 'pinch') {
+    const [first, second] = [...viewerPointers.values()];
+    const distance = viewerDistance(first, second);
+    if (viewerGestureStart.distance > 0) {
+      viewerScale = clampViewerScale(
+        viewerGestureStart.scale * distance / viewerGestureStart.distance,
+      );
+      if (viewerScale === 1) viewerTranslation = { x: 0, y: 0 };
+      updateViewerTransform();
+    }
+  } else if (viewerPointers.size === 1 && viewerGestureStart?.type === 'pan' && viewerScale > 1) {
+    viewerTranslation = {
+      x: viewerGestureStart.translation.x + event.clientX - viewerGestureStart.x,
+      y: viewerGestureStart.translation.y + event.clientY - viewerGestureStart.y,
+    };
+    updateViewerTransform();
+  }
+}
+
+function handleViewerPointerUp(event) {
+  const wasTracking = viewerPointers.has(event.pointerId);
+  viewerPointers.delete(event.pointerId);
+  if (!wasTracking) return;
+  const now = Date.now();
+  if (viewerPointers.size === 0) {
+    if (suppressViewerTap) {
+      lastViewerTap = 0;
+    } else if (viewerGestureStart?.type === 'pan' &&
+        Math.hypot(event.clientX - viewerGestureStart.x, event.clientY - viewerGestureStart.y) < 8) {
+      if (now - lastViewerTap < 350) {
+        viewerScale = viewerScale > 1 ? 1 : 2.5;
+        viewerTranslation = { x: 0, y: 0 };
+        updateViewerTransform();
+        lastViewerTap = 0;
+      } else {
+        lastViewerTap = now;
+      }
+    }
+    suppressViewerTap = false;
+  }
+  viewerGestureStart = viewerPointers.size === 1
+    ? {
+      type: 'pan',
+      ...[...viewerPointers.values()][0],
+      translation: { ...viewerTranslation },
+    }
+    : null;
+}
+
+function trapPhotoViewerFocus(event) {
+  if ($('photo-viewer').hidden || event.key !== 'Tab') return;
+  const focusable = [...$('photo-viewer').querySelectorAll(
+    'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )].filter((node) => !node.hidden);
+  if (!focusable.length) {
+    event.preventDefault();
+    $('photo-viewer').focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 
 function openJobDb() {
   return new Promise((resolve, reject) => {
@@ -179,12 +345,15 @@ function showStep(step) {
   show('step-pick', step === 'pick');
   show('step-progress', step === 'progress');
   show('step-result', step === 'result');
-  show('new-btn', step === 'result');
+  show('result-actions', step === 'result');
+  if ($('include-photo-option')) {
+    show('include-photo-option', step === 'result' && Boolean(thumbObjectUrl));
+  }
   if (stickyCtaObserver) {
     if (step === 'result') stickyCtaObserver.observe($('new-btn-sentinel'));
     else {
       stickyCtaObserver.unobserve($('new-btn-sentinel'));
-      $('new-btn').classList.remove('is-sticky');
+      $('result-actions').classList.remove('is-sticky');
     }
   }
 }
@@ -318,12 +487,23 @@ function stopPolling() {
   }
 }
 
-function showJobThumb(job) {
-  const thumb = $('thumb');
-  if (thumbObjectUrl) URL.revokeObjectURL(thumbObjectUrl);
-  thumbObjectUrl = job.blob ? URL.createObjectURL(job.blob) : null;
-  thumb.src = thumbObjectUrl || job.thumbDataUrl || '';
-  show('thumb', Boolean(thumb.src));
+async function showJobThumb(job) {
+  if (job.blob) {
+    setPhotoPreview(job.blob);
+    return;
+  }
+  if (!job.thumbDataUrl) {
+    releasePhotoPreview();
+    return;
+  }
+  try {
+    const response = await fetch(job.thumbDataUrl);
+    if (!response.ok) throw new Error(`Thumbnail conversion returned HTTP ${response.status}`);
+    setPhotoPreview(await response.blob());
+  } catch (error) {
+    console.error('Could not restore the pending prescription preview:', error);
+    releasePhotoPreview();
+  }
 }
 
 async function failJob(job, message) {
@@ -339,6 +519,7 @@ async function failJob(job, message) {
   activeJob = null;
   clearId();
   clearThumb();
+  releasePhotoPreview();
   showError(message);
   showStep('pick');
 }
@@ -373,6 +554,183 @@ function safeSourceLink(sourceUrl, title) {
   }
 }
 
+function buildPrintReport(result, { includePhoto = false, photoUrl = null, now = new Date() } = {}) {
+  const report = document.createElement('section');
+  report.className = 'print-report-content';
+  const data = result && typeof result === 'object' ? result : {};
+  const interactions = Array.isArray(data.interactions) ? data.interactions : [];
+  const documented = interactions.filter((item) => item && item.status === 'verified');
+  const detected = Array.isArray(data.detected_drugs) ? data.detected_drugs : [];
+  const uncertain = Array.isArray(data.uncertain) ? data.uncertain : [];
+  const aiSuggestions = Array.isArray(data.ai_suggested_interactions)
+    ? data.ai_suggested_interactions.filter((item) =>
+      item && item.status === 'ai_suggested' && item.review_status === 'ai_unverified')
+    : [];
+  const addText = (parent, tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    node.textContent = text == null ? '' : String(text);
+    parent.appendChild(node);
+    return node;
+  };
+  const addSection = (title) => {
+    const section = document.createElement('section');
+    section.className = 'print-report-block';
+    addText(section, 'h2', '', title);
+    report.appendChild(section);
+    return section;
+  };
+  const addMedicine = (list, drug, withConfidence = false) => {
+    const item = document.createElement('li');
+    const name = typeof drug.name === 'string' && drug.name.trim()
+      ? drug.name.trim()
+      : t('noName');
+    addText(item, 'strong', '', name);
+    const fields = [];
+    for (const [field, key] of [
+      ['dosage', 'fieldDosage'],
+      ['frequency', 'fieldFrequency'],
+      ['duration', 'fieldDuration'],
+    ]) {
+      if (typeof drug[field] === 'string' && drug[field].trim()) {
+        fields.push(`${t(key)}: ${drug[field].trim()}`);
+      }
+    }
+    if (fields.length) addText(item, 'p', '', fields.join(' · '));
+    if (withConfidence) {
+      const confidence = drug.confidence;
+      if (typeof confidence === 'number' && Number.isFinite(confidence)) {
+        addText(item, 'p', '', `${t('confidenceLabel')}: ${
+          t(confidence < 0.4 ? 'confidenceLow' : 'confidenceMedium')}`);
+      }
+    }
+    list.appendChild(item);
+  };
+  const severityLabel = (severity) => {
+    const key = {
+      avoid: 'severityAvoid',
+      caution: 'severityCaution',
+      monitor: 'severityMonitor',
+    }[severity];
+    return key ? t(key) : '—';
+  };
+
+  addText(report, 'h1', 'print-report-title', t('printTitle'));
+  const dateLocale = language === 'fr' ? 'fr' : 'en';
+  addText(report, 'p', 'print-report-date',
+    `${t('printDate')}: ${new Intl.DateTimeFormat(dateLocale, {
+      dateStyle: 'long',
+      timeStyle: 'short',
+    }).format(now)}`);
+
+  const readSection = addSection(t('printReadTitle'));
+  if (detected.length) {
+    const readList = document.createElement('ul');
+    for (const drug of detected) addMedicine(readList, drug);
+    readSection.appendChild(readList);
+  } else {
+    addText(readSection, 'p', '', t('detectedEmpty'));
+  }
+
+  const uncertainSection = addSection(t('printUncertainTitle'));
+  if (uncertain.length) {
+    const uncertainList = document.createElement('ul');
+    for (const drug of uncertain) addMedicine(uncertainList, drug, true);
+    uncertainSection.appendChild(uncertainList);
+  } else {
+    addText(uncertainSection, 'p', '', t('printNone'));
+  }
+
+  if (documented.length) {
+    const documentedSection = addSection(t('verifiedTitle'));
+    for (const interaction of documented) {
+      const item = document.createElement('article');
+      item.className = 'print-interaction';
+      addText(item, 'h3', '', `${interaction.drug_a || t('noName')} + ${interaction.drug_b || t('noName')}`);
+      addText(item, 'p', '', `${t('severityLabel')}: ${severityLabel(interaction.severity)}`);
+      const summary = language === 'fr'
+        ? interaction.summary_fr || interaction.summary_en
+        : language === 'fon'
+          ? interaction.summary_fon_human || interaction.summary_en || interaction.summary_fr
+          : interaction.summary_en || interaction.summary_fr;
+      if (summary) addText(item, 'p', '', summary);
+      const source = interaction.source && typeof interaction.source === 'object'
+        ? interaction.source
+        : {};
+      if (source.title) addText(item, 'p', '', `${t('source')}: ${source.title}`);
+      if (source.url) addText(item, 'p', 'print-url', source.url);
+      if (interaction.review_status === 'unreviewed') {
+        addText(item, 'p', 'print-unreviewed', t('printUnreviewed'));
+      }
+      documentedSection.appendChild(item);
+    }
+  } else {
+    addText(addSection(t('verifiedTitle')), 'p', '', t('printNoDocumented'));
+  }
+
+  if (aiSuggestions.length) {
+    const aiSection = addSection(t('aiSuggestedTitle'));
+    for (const interaction of aiSuggestions) {
+      const item = document.createElement('article');
+      item.className = 'print-interaction';
+      addText(item, 'h3', '', `${interaction.drug_a || t('noName')} + ${interaction.drug_b || t('noName')}`);
+      addText(item, 'p', '', `${t('severityLabel')}: ${severityLabel(interaction.severity)}`);
+      const summary = language === 'fr'
+        ? interaction.summary_fr || interaction.summary_en
+        : interaction.summary_en || interaction.summary_fr;
+      if (summary) addText(item, 'p', '', summary);
+      addText(item, 'p', '', t('aiSuggestedDisclaimer'));
+      aiSection.appendChild(item);
+    }
+  }
+
+  if (includePhoto && typeof photoUrl === 'string' && photoUrl.startsWith('blob:')) {
+    const photoSection = addSection(t('includePhoto'));
+    const image = document.createElement('img');
+    image.className = 'print-prescription-photo';
+    image.src = photoUrl;
+    image.alt = t('photoAlt');
+    photoSection.appendChild(image);
+  }
+  addText(report, 'p', 'print-report-footer', t('footerDisclaimer'));
+  return report;
+}
+
+function localPrintFilenameDate(date) {
+  const twoDigits = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())}-` +
+    `${twoDigits(date.getHours())}${twoDigits(date.getMinutes())}`;
+}
+
+let printPreviousTitle = null;
+
+function finishPrintReport() {
+  const report = $('print-report');
+  report.replaceChildren();
+  report.hidden = true;
+  if (printPreviousTitle !== null) document.title = printPreviousTitle;
+  printPreviousTitle = null;
+}
+
+function printCurrentResult() {
+  if (!latestResult) return;
+  const report = $('print-report');
+  report.replaceChildren(buildPrintReport(latestResult, {
+    includePhoto: $('include-photo').checked,
+    photoUrl: thumbObjectUrl,
+  }));
+  report.hidden = false;
+  printPreviousTitle = document.title;
+  document.title = `PharmaClear-${localPrintFilenameDate(new Date())}`;
+  window.addEventListener('afterprint', finishPrintReport, { once: true });
+  try {
+    window.print();
+  } catch (error) {
+    finishPrintReport();
+    throw error;
+  }
+}
+
 function renderResult(result, isSample = false) {
   const box = $('result-content');
   box.replaceChildren();
@@ -385,6 +743,10 @@ function renderResult(result, isSample = false) {
   const interactions = Array.isArray(data.interactions) ? data.interactions : [];
   const verified = interactions.filter((item) => item && item.status === 'verified');
   const unverifiedCount = interactions.filter((item) => item && item.status === 'not_verified').length;
+  const aiSuggestions = Array.isArray(data.ai_suggested_interactions)
+    ? data.ai_suggested_interactions.filter((item) =>
+      item && item.status === 'ai_suggested' && item.review_status === 'ai_unverified')
+    : [];
   const uncertain = Array.isArray(data.uncertain) ? data.uncertain : [];
   const detected = Array.isArray(data.detected_drugs) ? data.detected_drugs : [];
   const cards = makeElement('div', 'result');
@@ -555,6 +917,63 @@ function renderResult(result, isSample = false) {
     cards.appendChild(interactionCard);
   }
 
+  if (unverifiedCount > 0) {
+    const unverified = makeElement('p', 'interaction-unverified');
+    unverified.append(
+      icon('info'),
+      makeElement('span', null, t('notVerifiedSummary', { count: unverifiedCount })),
+    );
+    cards.appendChild(unverified);
+  }
+
+  if (aiSuggestions.length) {
+    const aiCard = makeElement('section', 'result-card result-card--ai');
+    const textForAi = (key, values = {}) => {
+      const template = language === 'fon'
+        ? englishTranslations[key] || key
+        : translations[key] || englishTranslations[key] || key;
+      return template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''));
+    };
+    aiCard.appendChild(heading('ai', textForAi('aiSuggestedTitle')));
+    if (language === 'fon') {
+      aiCard.appendChild(makeElement('p', 'ai-language-note',
+        textForAi('aiLanguageNote')));
+    }
+    for (const interaction of aiSuggestions) {
+      const item = makeElement('article', 'ai-interaction-entry');
+      const drugs = makeElement('div', 'interaction-drugs');
+      drugs.append(
+        pill(interaction.drug_a, 'ai-drug-pill'),
+        makeElement('span', 'interaction-plus', '+'),
+        pill(interaction.drug_b, 'ai-drug-pill'),
+      );
+      item.appendChild(drugs);
+      const meta = makeElement('div', 'interaction-meta');
+      const severityKey = {
+        avoid: 'severityAvoid',
+        caution: 'severityCaution',
+        monitor: 'severityMonitor',
+      }[interaction.severity];
+      meta.appendChild(makeElement('span', 'ai-severity-badge',
+        textForAi('severity', { severity: severityKey
+          ? textForAi(severityKey)
+          : '—' })));
+      if (interaction.simulated) {
+        meta.appendChild(makeElement('span', 'ai-simulated-badge',
+          textForAi('aiSimulated')));
+      }
+      item.appendChild(meta);
+      const summaryText = language === 'fr'
+        ? interaction.summary_fr
+        : interaction.summary_en;
+      item.appendChild(makeElement('p', 'ai-interaction-summary', summaryText));
+      item.appendChild(makeElement('p', 'ai-interaction-disclaimer',
+        textForAi('aiSuggestedDisclaimer')));
+      aiCard.appendChild(item);
+    }
+    cards.appendChild(aiCard);
+  }
+
   const hasUncertainty = uncertain.length > 0 || data.status === 'not_a_prescription' ||
     (data.image_quality && data.image_quality !== 'good') ||
     (typeof data.notes === 'string' && data.notes.trim());
@@ -589,14 +1008,6 @@ function renderResult(result, isSample = false) {
     cards.appendChild(readCard);
   }
 
-  if (unverifiedCount > 0) {
-    const unverified = makeElement('p', 'interaction-unverified');
-    unverified.append(
-      icon('info'),
-      makeElement('span', null, t('notVerifiedSummary', { count: unverifiedCount })),
-    );
-    cards.appendChild(unverified);
-  }
   box.appendChild(cards);
 }
 
@@ -613,10 +1024,6 @@ async function showResult(result) {
   activeJob = null;
   clearId();
   clearThumb();
-  if (thumbObjectUrl) URL.revokeObjectURL(thumbObjectUrl);
-  thumbObjectUrl = null;
-  $('thumb').removeAttribute('src');
-  show('thumb', false);
   latestResult = result;
   latestResultIsSample = false;
   try {
@@ -738,6 +1145,7 @@ async function handleFile(file) {
     return;
   }
 
+  releasePhotoPreview();
   let blob;
   let thumbDataUrl;
   try {
@@ -761,8 +1169,7 @@ async function handleFile(file) {
     return;
   }
 
-  saveThumb(thumbDataUrl);
-  showJobThumb(activeJob);
+  await showJobThumb(activeJob);
   showStep('progress');
   setProgress(navigator.onLine ? 'sending' : 'offline');
   startPolling(activeJob);
@@ -774,6 +1181,7 @@ async function handleSample() {
     return;
   }
   show('error', false);
+  releasePhotoPreview();
   try {
     const [imageResponse, resultResponse] = await Promise.all([
       fetch('/samples/sample-prescription.png'),
@@ -786,14 +1194,12 @@ async function handleSample() {
     ]);
     latestResult = result;
     latestResultIsSample = true;
-    if (thumbObjectUrl) URL.revokeObjectURL(thumbObjectUrl);
-    thumbObjectUrl = URL.createObjectURL(imageBlob);
-    $('thumb').src = thumbObjectUrl;
-    show('thumb', true);
+    setPhotoPreview(imageBlob);
     renderResult(result, true);
     showStep('result');
   } catch (error) {
     console.error('Could not load the precomputed synthetic sample:', error);
+    releasePhotoPreview();
     showError(t('errorNoSample'));
     showStep('pick');
   }
@@ -801,6 +1207,7 @@ async function handleSample() {
 
 async function resetAll() {
   stopPolling();
+  closePhotoViewer(false);
   if (activeJob) {
     try {
       await deleteJob(activeJob.id);
@@ -816,10 +1223,7 @@ async function resetAll() {
   latestResult = null;
   latestResultIsSample = false;
   show('error', false);
-  if (thumbObjectUrl) URL.revokeObjectURL(thumbObjectUrl);
-  thumbObjectUrl = null;
-  $('thumb').removeAttribute('src');
-  show('thumb', false);
+  releasePhotoPreview();
   $('cam').value = '';
   $('gal').value = '';
   showStep('pick');
@@ -847,7 +1251,7 @@ async function resumePendingJob() {
     if (jobs.length === 0) return;
     jobs.sort((first, second) => first.createdAt - second.createdAt);
     activeJob = jobs[0];
-    showJobThumb(activeJob);
+    await showJobThumb(activeJob);
     showStep('progress');
     setProgress(navigator.onLine ? 'resume' : 'offline');
     startPolling(activeJob);
@@ -860,7 +1264,7 @@ async function resumePendingJob() {
 async function initialize() {
   if ('IntersectionObserver' in window) {
     stickyCtaObserver = new IntersectionObserver(([entry]) => {
-      $('new-btn').classList.toggle('is-sticky', entry.isIntersecting);
+      $('result-actions').classList.toggle('is-sticky', entry.isIntersecting);
     });
   }
   $('debug-relay').hidden = !DEBUG_RELAY;
@@ -889,7 +1293,25 @@ async function initialize() {
   }
   $('cam').addEventListener('change', (event) => handleFile(event.target.files[0]));
   $('gal').addEventListener('change', (event) => handleFile(event.target.files[0]));
+  $('thumb-preview').addEventListener('click', openPhotoViewer);
+  $('photo-viewer-close').addEventListener('click', () => closePhotoViewer());
+  $('photo-viewer').addEventListener('click', (event) => {
+    if (event.target === $('photo-viewer')) closePhotoViewer();
+  });
+  $('photo-viewer-image').addEventListener('pointerdown', handleViewerPointerDown);
+  $('photo-viewer-image').addEventListener('pointermove', handleViewerPointerMove);
+  $('photo-viewer-image').addEventListener('pointerup', handleViewerPointerUp);
+  $('photo-viewer-image').addEventListener('pointercancel', handleViewerPointerUp);
+  $('photo-viewer').addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closePhotoViewer();
+    } else {
+      trapPhotoViewerFocus(event);
+    }
+  });
   $('new-btn').addEventListener('click', resetAll);
+  $('save-pdf-btn').addEventListener('click', printCurrentResult);
   $('sample-btn').addEventListener('click', handleSample);
   $('access-submit').addEventListener('click', submitDemoAccess);
   $('access-code').addEventListener('keydown', (event) => {
@@ -912,6 +1334,14 @@ async function initialize() {
   window.addEventListener('offline', () => {
     backendReachable = false;
     updateNetworkStatus();
+  });
+  window.addEventListener('beforeunload', () => {
+    closePhotoViewer(false);
+    releasePhotoPreview();
+  });
+  window.addEventListener('pagehide', () => {
+    closePhotoViewer(false);
+    releasePhotoPreview();
   });
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/service-worker.js')

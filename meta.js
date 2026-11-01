@@ -2,11 +2,25 @@
 // Ce module est utilisé par server.js ET par tools/lire.js.
 require('./env');
 
+function getModelSettings(environment) {
+  const effort = environment.MODEL_REASONING_EFFORT || environment.META_EFFORT || 'low';
+  const maxOutputTokens = environment.MODEL_MAX_OUTPUT_TOKENS === undefined
+    ? 4000
+    : Number(environment.MODEL_MAX_OUTPUT_TOKENS);
+  if (!['low', 'medium', 'high'].includes(effort)) {
+    throw new Error('MODEL_REASONING_EFFORT must be low, medium, or high');
+  }
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
+    throw new Error('MODEL_MAX_OUTPUT_TOKENS must be a positive integer');
+  }
+  return { effort, maxOutputTokens };
+}
+
 const CONFIG = {
   apiKey: process.env.META_API_KEY || process.env.MODEL_API_KEY || '',
   apiUrl: process.env.META_API_URL || 'https://api.meta.ai/v1/responses',
   model: process.env.META_MODEL || 'muse-wonder-1.0',
-  effort: process.env.META_EFFORT || 'low',
+  ...getModelSettings(process.env),
   confMin: Number(process.env.CONF_MIN) || 0.7,
   timeoutMs: 50000, // doit rester sous les 60 s de curl dans le serveur C
 };
@@ -48,7 +62,7 @@ async function callMeta(buffer, mime) {
   const body = {
     model: CONFIG.model,
     reasoning: { effort: CONFIG.effort },
-    max_output_tokens: 8000, // les tokens de raisonnement comptent dans cette limite
+    max_output_tokens: CONFIG.maxOutputTokens, // les tokens de raisonnement comptent dans cette limite
     instructions: INSTRUCTIONS,
     input: [
       {
@@ -66,7 +80,7 @@ async function callMeta(buffer, mime) {
     resp = await fetch(CONFIG.apiUrl, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${CONFIG.apiKey}`,
+        Authorization: `Bearer ${CONFIG.apiKey}`, 
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
@@ -101,6 +115,58 @@ function extractText(data) {
   return out;
 }
 
+async function suggestDrugInteractions(drugNames) {
+  if (!Array.isArray(drugNames) || drugNames.length < 2 || drugNames.length > 8 ||
+      drugNames.some((name) => typeof name !== 'string' || !name.trim())) {
+    throw new TypeError('Two to eight confident medicine names are required');
+  }
+  const prompt = 'You are assisting with a prototype. For the given medicine names, ' +
+    'list ONLY well-established, widely documented drug–drug interactions between two of them. ' +
+    'If you are not sure, omit the pair. Do not give dosing advice. Do not say a combination is safe. ' +
+    'Return JSON only: {"pairs":[{"a":"name","b":"name","severity":"avoid|caution|monitor",' +
+    '"summary_en":"text","summary_fr":"text"}]}. Max 5 pairs, each summary ≤ 2 sentences.\n' +
+    `Medicine names: ${JSON.stringify(drugNames)}`;
+  const body = {
+    model: CONFIG.model,
+    reasoning: { effort: CONFIG.effort },
+    max_output_tokens: CONFIG.maxOutputTokens,
+    instructions: 'Return only the requested JSON object, without markdown or commentary.',
+    input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }],
+  };
+  let response;
+  try {
+    response = await fetch(CONFIG.apiUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${CONFIG.apiKey}`, 
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(CONFIG.timeoutMs),
+    });
+  } catch (error) {
+    throw new UpstreamError(`Interaction suggestion network error: ${error.message}`, true);
+  }
+  if (!response.ok) {
+    const text = (await response.text().catch(() => '')).slice(0, 300);
+    const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+    throw new UpstreamError(`Interaction suggestion API HTTP ${response.status}: ${text}`, retryable);
+  }
+  let data;
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new UpstreamError('Interaction suggestion API returned invalid JSON', true);
+  }
+  if (data.usage) {
+    const reasoning = data.usage.output_tokens_details &&
+      data.usage.output_tokens_details.reasoning_tokens;
+    console.log(`[meta] interaction suggestions tokens entrée=${data.usage.input_tokens} ` +
+      `sortie=${data.usage.output_tokens} raisonnement=${reasoning}`);
+  }
+  return extractText(data);
+}
+
 async function translateInteractionSummaryToFon(summaryEn) {
   if (typeof summaryEn !== 'string' || !summaryEn.trim() || summaryEn.length > 1000) {
     throw new TypeError('A verified English interaction summary is required');
@@ -123,7 +189,7 @@ async function translateInteractionSummaryToFon(summaryEn) {
     response = await fetch(CONFIG.apiUrl, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${CONFIG.apiKey}`,
+        Authorization: `Bearer ${CONFIG.apiKey}`, 
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
@@ -205,14 +271,32 @@ function normalize(p) {
 }
 
 // Fonction principale : photo (Buffer) -> résultat prêt pour la page.
-async function analyzePrescription(buffer, mime) {
+async function analyzePrescription(buffer, mime, { onResponse } = {}) {
   for (let attempt = 1; attempt <= 2; attempt++) {
     const data = await callMeta(buffer, mime);
     if (data.usage) {
       const reasoning = data.usage.output_tokens_details && data.usage.output_tokens_details.reasoning_tokens;
       console.log(`[meta] tokens entrée=${data.usage.input_tokens} sortie=${data.usage.output_tokens} raisonnement=${reasoning}`);
     }
-    const parsed = parseModelJson(extractText(data));
+    const text = extractText(data);
+    const parsed = parseModelJson(text);
+    if (onResponse) {
+      const outputItems = Array.isArray(data.output) ? data.output : [];
+      const finishReason = data.finish_reason || data.stop_reason ||
+        outputItems.map((item) => item.finish_reason || item.stop_reason).find(Boolean) || null;
+      onResponse({
+        attempt,
+        status: data.status || null,
+        incompleteReason: data.incomplete_details && data.incomplete_details.reason || null,
+        finishReason,
+        jsonStatus: parsed ? 'valid' : text.trim() ? 'invalid_or_incomplete' : 'missing',
+        inputTokens: data.usage && Number(data.usage.input_tokens) || 0,
+        outputTokens: data.usage && Number(data.usage.output_tokens) || 0,
+        reasoningTokens: data.usage && data.usage.output_tokens_details
+          ? Number(data.usage.output_tokens_details.reasoning_tokens) || 0
+          : 0,
+      });
+    }
     if (parsed) return normalize(parsed);
     console.warn(`[meta] sortie du modèle inexploitable (essai ${attempt}/2)`);
   }
@@ -221,8 +305,10 @@ async function analyzePrescription(buffer, mime) {
 
 module.exports = {
   analyzePrescription,
+  suggestDrugInteractions,
   translateInteractionSummaryToFon,
   UpstreamError,
   ModelOutputError,
   CONFIG,
+  getModelSettings,
 };

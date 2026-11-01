@@ -19,8 +19,11 @@ hosting provider's runtime environment-variable settings:
 Do not put secrets in Docker build arguments, the Dockerfile, source control,
 or a public URL. Use separate random values for the relay credential and
 internal relay credential. Other optional runtime settings include
-`DAILY_ANALYSIS_LIMIT`, `API_RATE_LIMIT`, `FON_MT`, `TRUST_PROXY`,
-`CORS_ORIGIN`, and `PHARMA_MOCK`.
+`DAILY_ANALYSIS_LIMIT`, `DAILY_AI_INTERACTION_LIMIT` (default `200`),
+`API_RATE_LIMIT`, `FON_MT`, `TRUST_PROXY`,
+`CORS_ORIGIN`, `PHARMA_MOCK`, `MODEL_REASONING_EFFORT` (`low`, `medium`, or
+`high`; default `low`), and `MODEL_MAX_OUTPUT_TOKENS` (positive integer;
+default `4000`).
 
 ## Render
 
@@ -48,8 +51,10 @@ internal relay credential. Other optional runtime settings include
 - **Health check path:** `/api/health`.
 - **Runtime variables to configure:** `MODEL_API_KEY`, `DEMO_ACCESS_CODE`,
   `RELAY_TOKEN` or `PHARMA_TOKEN`, `INTERNAL_RELAY_TOKEN` or
-  `PHARMA_NODE_TOKEN`, `DAILY_ANALYSIS_LIMIT`, `API_RATE_LIMIT`, `FON_MT`,
-  `TRUST_PROXY`, `CORS_ORIGIN`, and `PHARMA_MOCK`. Render supplies `PORT`.
+  `PHARMA_NODE_TOKEN`, `DAILY_ANALYSIS_LIMIT`, `DAILY_AI_INTERACTION_LIMIT`,
+  `API_RATE_LIMIT`, `FON_MT`,
+  `TRUST_PROXY`, `CORS_ORIGIN`, `PHARMA_MOCK`, `MODEL_REASONING_EFFORT`,
+  and `MODEL_MAX_OUTPUT_TOKENS`. Render supplies `PORT`.
 
 The Render free tier sleeps after 15 minutes without traffic and can take about
 one minute to wake. The daily counter in `runtime/` resets when the instance

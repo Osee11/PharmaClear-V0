@@ -4,6 +4,78 @@
       "id": "sample-ibuprofen-aspirin",
       "image": "sample-ibuprofen-aspirin.png",
       "expected": ["Ibuprofène", "Aspirine"]
+    },
+    {
+      "id": "01",
+      "image": "01.jpg",
+      "expected": ["Curacné","Azix","Aclin gel"]
+    },
+    {
+      "id": "02",
+      "image": "02.jpg",
+      "expected": ["Paracetamol","Fervex","Arzi"]
+    },
+    {
+      "id": "03",
+      "image": "03.jpg",
+      "expected": ["Antiangineux","Hypotenseur"]
+    },
+    {
+      "id": "04",
+      "image": "04.jpg",
+      "expected": ["Urée","Glycerine","Acide lactique","Codexial Cold Cream"]
+    },
+    {
+      "id": "05",
+      "image": "05.jpg",
+      "expected": ["Baume Saint Bernard","Niflugel"]
+    },
+    {
+      "id": "06",
+      "image": "06.jpg",
+      "expected": []
+    },
+    {
+      "id": "07",
+      "image": "07.jpg",
+      "expected": []
+    },
+    {
+      "id": "08",
+      "image": "08.jpg",
+      "expected": []
+    },
+    {
+      "id": "09",
+      "image": "09.jpg",
+      "expected": []
+    },
+    {
+      "id": "10",
+      "image": "010.jpg",
+      "expected": []
+    },
+    {
+      "id": "11",
+      "image": "011.jpg",
+      "expected": []
+    },
+    {
+      "id": "12",
+      "image": "012.jpg",
+      "expected": []
+    },
+    {
+      "id": "13",
+      "image": "013.jpg",
+      "expected": []
+    },
+    {
+      "id": "14",
+      "image": "014.jpg",
+      "expected": []
     }
   ]
 }
+
+

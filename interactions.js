@@ -110,6 +110,95 @@ function pairKey(first, second) {
   return [first, second].sort().join('\u0000');
 }
 
+function validateAiInteractionSuggestions(text, drugNames, documentedInteractions = []) {
+  if (typeof text !== 'string' || !Array.isArray(drugNames) ||
+      !Array.isArray(documentedInteractions)) {
+    return [];
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    return [];
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+      Object.keys(parsed).length !== 1 || !Array.isArray(parsed.pairs) ||
+      parsed.pairs.length > 5) {
+    return [];
+  }
+
+  const names = new Map(
+    drugNames
+      .filter((name) => typeof name === 'string' && normalizeName(name))
+      .map((name) => [normalizeName(name), name.trim()]),
+  );
+  const documented = new Set(documentedInteractions
+    .filter((item) => item && item.status === 'verified')
+    .map((item) => pairKey(normalizeName(item.drug_a), normalizeName(item.drug_b))));
+  const seen = new Set();
+  const suggestions = [];
+
+  for (const pair of parsed.pairs) {
+    if (!pair || typeof pair !== 'object' || Array.isArray(pair) ||
+        Object.keys(pair).length !== 5 ||
+        !['a', 'b', 'severity', 'summary_en', 'summary_fr']
+          .every((key) => Object.hasOwn(pair, key))) {
+      return [];
+    }
+    if (typeof pair.a !== 'string' || typeof pair.b !== 'string' ||
+        !names.has(normalizeName(pair.a)) ||
+        !names.has(normalizeName(pair.b)) ||
+        normalizeName(pair.a) === normalizeName(pair.b) ||
+        !['avoid', 'caution', 'monitor'].includes(pair.severity)) {
+      return [];
+    }
+    for (const summary of [pair.summary_en, pair.summary_fr]) {
+      if (typeof summary !== 'string' || !summary.trim() || summary.length > 1000 ||
+          (summary.match(/[.!?](?=\s|$)/g) || []).length > 2 ||
+          /\bsafe(?:ty|ly)?\b/i.test(summary)) {
+        return [];
+      }
+    }
+    const drugA = names.get(normalizeName(pair.a));
+    const drugB = names.get(normalizeName(pair.b));
+    const key = pairKey(normalizeName(drugA), normalizeName(drugB));
+    if (documented.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    suggestions.push({
+      status: 'ai_suggested',
+      source: 'model',
+      review_status: 'ai_unverified',
+      drug_a: drugA,
+      drug_b: drugB,
+      severity: pair.severity,
+      summary_en: pair.summary_en.trim(),
+      summary_fr: pair.summary_fr.trim(),
+    });
+  }
+  return suggestions;
+}
+
+function selectConfidentDrugs(drugs, limit = 8) {
+  if (!Array.isArray(drugs)) return [];
+  const selected = drugs
+    .filter((drug) => drug && typeof drug.name === 'string' &&
+      drug.name.trim() && typeof drug.confidence === 'number' &&
+      Number.isFinite(drug.confidence) && drug.confidence >= 0.7)
+    .map((drug, index) => ({ drug, index }))
+    .sort((first, second) =>
+      second.drug.confidence - first.drug.confidence || first.index - second.index);
+  const seen = new Set();
+  const result = [];
+  for (const { drug } of selected) {
+    const key = normalizeName(drug.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(drug);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
 function createInteractionChecker(sourceTable) {
   validateInteractionTable(sourceTable);
   const aliases = new Map(
@@ -218,5 +307,7 @@ module.exports = {
   checkDrugInteractions: productionChecker.checkDrugInteractions,
   createInteractionChecker,
   normalizeName,
+  selectConfidentDrugs,
+  validateAiInteractionSuggestions,
   validateInteractionTable,
 };
