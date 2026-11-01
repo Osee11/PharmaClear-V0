@@ -1,92 +1,115 @@
 # PharmaClear
 
+PharmaClear reads a photographed prescription, shows what it is sure about, flags what it is not sure about, and checks documented interactions — with the uncertainty always visible.
+
 ## Try it in 60 seconds
 
-Demo URL: `<DEPLOY_URL>`  
-Demo access code: `<DEMO_CODE>`
+URL: `<DEPLOY_URL>` · Demo code: `<DEMO_CODE>`
 
-1. Open the demo URL and enter the demo access code.
-2. Choose a prescription photo, or use the [synthetic sample prescription](./public/samples/sample-prescription.png).
-3. Wait for the transcription and interaction-table check.
-4. Compare every displayed name with the original prescription and ask a pharmacist if anything is unclear.
+1. Open the URL and enter the demo code.
+2. Choose English, French, or Fon.
+3. Select **Try a sample prescription** or take a photo.
+4. Review the three result areas: read with confidence, uncertain, and interaction alerts.
+
+First load may take about a minute if the free server was asleep. When offline, a photo is queued on the device and analysis resumes when the network returns. Analysis itself requires a network connection.
+
+The sample uses the fictional [prescription image](./public/samples/sample-prescription.png).
+
+## What it does
+
+- Transcribes medicine names and visible dosage instructions, displays the model's confidence, and separates uncertain names.
+- Checks medicine pairs against a deterministic, sourced interaction table. AI-suggested interactions, when available, are shown separately and labelled not verified.
+- Provides English, French, and Fon interface choices; queues photos for later upload while offline.
+- Keeps the submitted photo available in the result view for enlargement, and offers a browser print dialog for saving a result as PDF.
+
+PharmaClear does not recommend a treatment or dosage, does not say that a combination is safe, and is not a medical device.
 
 ## Results
 
-Run the evaluation to generate [`eval/results.md`](./eval/results.md). Replace these placeholders only with values from that report.
+The tables below reproduce the latest [evaluation report](./eval/results.md), including both comparison modes.
 
-| Evaluation set | Images | Correct | Uncertain | False-confident | Missed | Mean time |
-|---|---:|---:|---:|---:|---:|---:|
-| TBD – run eval | TBD – run eval | TBD – run eval | TBD – run eval | TBD – run eval | TBD – run eval | TBD – run eval |
+| Case | Expected | Detected | Uncertain | Strict | Tolerant |
+|---|---|---|---|---|---|
+| sample-ibuprofen-aspirin | Ibuprofène, Aspirine | Ibuprofène, Aspirine |  | CORRECT | CORRECT |
+| 01 | Curacné, Azix, Aclin gel | Curacné, Azix, Aclin gel |  | CORRECT | CORRECT |
+| 02 | Paracetamol, Fervex, Arzi | Paracetamol | Fervex, Angi | UNCERTAIN | UNCERTAIN |
+| 03 | Antiangineux, Hypotenseur | Antiangineux, Hypotenseur |  | CORRECT | CORRECT |
+| 04 | Urée, Glycerine, Acide lactique, Codexial Cold Cream | Urée, Acide lactique | Glycérine, Codexial Cold cream | UNCERTAIN | UNCERTAIN |
+| 05 | Baume Saint Bernard, Niflugel | Baume Saint Bernard, Niflugel | Bandes Velpeau | CORRECT | CORRECT |
 
-## Known limits
+| Latest-run summary | Value |
+|---|---:|
+| Transcribed cases | 6 |
+| Unlabeled cases | 9 |
+| Expected names (denominator) | 16 |
+| Strict correct | 12/16 (75.0%) |
+| Tolerant correct | 12/16 (75.0%) |
+| Uncertain | 3 |
+| False-confident | 0 |
+| Missed | 1 |
+| Errors | 0 |
+| Mean time | 6.6 s |
 
-- The model's confidence is self-reported and has not been calibrated.
-- The interaction table contains only five pairs and has not been reviewed by a pharmacist.
-- Brand names are not recognized; matching is by supported generic names.
-- The sample is synthetic and the prototype is not clinically validated.
-- Fon includes human-written interface text and five human-written interaction summaries; automatic translation is only a labelled fallback.
-- Online access is required for analysis; offline photos wait on the phone, and iOS may require reopening the app to upload.
+Across the two runs, the observed range was 12–13 names read correctly out of 16, 2–3 uncertain names, 1 missed name, and 0 false-confident names. The latest run also included 9 unlabeled images; descriptively, it returned 8 names read with confidence and 22 uncertain names across those images. Those unlabeled-image counts are not accuracy scores.
+
+Small sample; the model's self-reported confidence is not calibrated. Reproduce with `node eval/run-eval.js`.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  PWA[Patient PWA] -->|HTTPS upload and result| Node[Node API and relay proxy]
-  Node -->|Queue/status requests| RelayC[C relay]
-  RelayC -->|Queued image with internal token| Node
-  Node -->|Prescription transcription| Meta[Meta Responses API]
-  Node <-->|Deterministic pair lookup| Interactions[(Local interaction table)]
-  Node --> PWA
+  PWA["Patient PWA<br/>IndexedDB offline queue"] -->|HTTPS upload| Node["Node / Express"]
+  Node -->|queue and poll| Relay["C relay<br/>disk queue; results up to 24 h"]
+  Relay -->|analysis request| Node
+  Node -->|image transcription| Meta["Meta Responses API<br/>muse-wonder-1.0"]
+  Meta -->|transcription| Node
+  Node -->|result| Relay
+  Relay -->|poll result| Node
+  Node -->|result| PWA
+  Table["Deterministic interaction table<br/>data/interactions.json"] --> Node
+  Table -.-> Note["The model never decides interactions"]
 ```
 
-PharmaClear is a prototype that transcribes prescription images and makes
-uncertainty visible. It does not prescribe, diagnose, or establish that a
-medicine combination is safe.
+The C relay queues uploads and forwards them to Node for analysis. The interaction table is evaluated separately from image transcription; model-generated Level 2 suggestions are never treated as documented table entries.
 
-> **Prototype, not clinically validated.** Always compare every reading with
-> the original prescription and ask a pharmacist when anything is unclear.
+## Safety & privacy
 
-## What it does
+- Node removes its temporary upload after request handling. The C relay removes the queued photo after a result is received; while processing is pending, the relay retains the queued file for retries. The browser's offline queue holds a photo until upload succeeds, and the result-view photo is kept only in memory while that view is open.
+- Relay results are retained for up to 24 hours, then cleaned up.
+- The five documented interaction pairs come from a [DailyMed ibuprofen label](https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=a266a3c6-932f-476f-ae93-48a785c92286), revised October 2025. The table has not been reviewed by a pharmacist. If a pair is not covered, it is shown as not verified, never as safe.
+- Severity labels (`avoid`, `caution`, and `monitor`) are documented editorial categories, not a clinically validated scale.
+- Tests and the included sample use fictional prescription images; no real patient photos are included.
+- Limits default to 20 requests per minute per client IP and 100 completed analyses per UTC day (`DAILY_ANALYSIS_LIMIT`). The quota counter is stored in `runtime/`; it resets if the host's ephemeral filesystem is replaced or the instance restarts.
 
-- Separates confident transcriptions from uncertain or unreadable text.
-- Checks medicine pairs only against a locally maintained, sourced interaction
-  table. The table currently contains five pairs from one US FDA-listed
-  ibuprofen drug label; it has not been reviewed by a pharmacist.
-- Labels every pair without a table entry as undocumented. No alert is not proof
-  of safety.
-- Keeps a compressed photo in the phone's IndexedDB queue while offline and
-  resumes upload when the connection returns or the app is reopened. Analysis
-  itself requires a network connection.
-- Deletes processed photos after the result is received and retains relay
-  results for 24 hours. Pending files in the C relay's `queue/` are not
-  automatically deleted.
+## Languages
 
-The patient-facing interface is English by default, with English, French, and
-Fon language choices. Unprovided Fon interface text falls back to English.
-Fon explanations written by a speaker are shown only for documented alerts
-and are labelled **“Written by a Fon speaker.”** Automatic Fon translation is
-only a fallback, is labelled **“Machine translation, please verify,”** and can
-be disabled with `FON_MT=0`.
+The interface defaults to English and also offers French and Fon. Fon interface text and the five documented-interaction summaries were written by a Fon speaker and are labelled **“Written by a Fon speaker.”** Automatic translation is only a labelled fallback and can be disabled with `FON_MT=0`.
 
-The Meta model transcribes the image; it is not the authority for interactions.
-The model configured and tested in this repository is `muse-wonder-1.0` at
-`https://api.meta.ai/v1/responses`. The sample button loads a synthetic
-precomputed result and makes no API call.
+## Known limits
 
-## Local setup (about 5 minutes)
+- Confidence is self-reported by the model and is not calibrated.
+- Results varied between the two observed runs by one name out of 16.
+- Evaluation uses a small sample: 6 transcribed prescriptions.
+- The documented interaction table contains only 5 pairs and uses French generic names; brand names and English names are not recognized by the table.
+- A pharmacist has not reviewed the table; severity labels are documented editorial choices.
+- Difficult handwriting may be reported as uncertain rather than resolved.
+- Level 2 interactions are generated by the model and not verified.
+- The free hosting tier sleeps after 15 minutes without traffic, may take about one minute to wake, and its daily counter resets when the instance restarts.
+- The prototype has not been clinically validated.
+
+## Run locally / Deploy
 
 Requirements: Node.js 18+, npm, GCC, pthreads, and `curl`.
 
-1. Copy `.env.example` to `.env`. Add `META_API_KEY` or `MODEL_API_KEY` only
-   locally if you want to call the real API. Never commit `.env`.
-2. From the project root:
+1. Copy `.env.example` to `.env`. Add `META_API_KEY` or `MODEL_API_KEY` locally only if using the live API. Do not commit `.env`.
+2. From the project root, install dependencies and start Node:
 
    ```sh
    npm install
    npm run dev
    ```
 
-3. In a second terminal:
+3. In a second terminal, compile and start the C relay:
 
    ```sh
    cd serveur_c
@@ -94,130 +117,10 @@ Requirements: Node.js 18+, npm, GCC, pthreads, and `curl`.
    PHARMA_BIND=127.0.0.1 ./serveur
    ```
 
-4. Open `http://localhost:3000`. Node proxies relay traffic to the C service on
-   port 8080.
+4. Open `http://localhost:3000`. Node proxies relay traffic to the C service on port 8080.
 
-Without an API key the server runs in simulation mode; set `PHARMA_MOCK=1` to
-make that mode explicit. Simulation values use `TEST-ONLY` labels and are never
-presented as a reading of the uploaded image.
+Without an API key the server runs in simulation mode; set `PHARMA_MOCK=1` to make that mode explicit. See [DEPLOY.md](./DEPLOY.md) for container and hosting configuration. This project is distributed under the [MIT License](./LICENSE). No hosting provider or public demo URL is configured in this repository.
 
-For real API tests, use synthetic images only:
+## Evaluation
 
-```sh
-node lire.js public/samples/sample-prescription.png
-```
-
-The included image is a clearly marked fictional test, with only the names
-“Ibuprofène” and “Aspirine”; it contains no patient details, dosage, or
-treatment instructions. The real `muse-wonder-1.0` pipeline read both names and
-matched the pair to the locally documented interaction table. The checked-in
-sample result is the unedited response from the full pipeline. Opening the
-sample in the app displays that saved result without calling Meta.
-
-## Patient and pharmacy-counter modes
-
-- **Patient:** use the HTTPS Node page. Offline photos remain on the phone until
-  upload succeeds; the page resumes on the `online` event or when reopened.
-  Background Sync is not implemented, and iOS may require reopening the app.
-- **Pharmacy counter:** the C relay accepts a photo, queues it locally, forwards
-  it to Node, and serves the result. It handles one client at a time. Bind it
-  to a trusted local interface and do not expose it directly to the public
-  internet.
-
-The PWA caches its shell and synthetic sample. Core page, script, style, and
-translation requests use network-first caching, with cache fallback only when
-the network request fails. The cache is versioned as
-`pharmaclear-static-v7`.
-
-## Documented interaction data
-
-[`data/interactions.json`](./data/interactions.json) contains five pairs taken
-from one US FDA-listed ibuprofen label on DailyMed. The table is explicitly
-**not reviewed by a pharmacist** (`reviewed_by_pharmacist: false`,
-`last_reviewed: null`). Every displayed alert identifies its source and
-publication date and clearly states that it has not yet been reviewed by a
-pharmacist.
-
-The pairs are ibuprofène with aspirine, furosémide, lithium, méthotrexate, and
-warfarine.
-
-The `avoid`, `caution`, and `monitor` values are editorial display categories,
-not a validated clinical severity scale. Pair matching uses exact generic
-names after ignoring case, accents, and repeated whitespace; pair order does
-not matter. Brand names and English translations of the French generic names
-are not recognized. Names or pairs absent from the table remain undocumented;
-they are never represented as safe. No aliases are currently configured.
-See [`data/README.md`](./data/README.md) for the source and schema.
-
-English and French summaries come from the source table. Speaker-written Fon
-summaries use the distinct `summary_fon_human` field and are never overwritten.
-When no human summary is present, automatic translation is used only if
-`FON_MT` is not `0`; translation failures or disabled translation leave the
-documented English/French summaries available. Test-only values are isolated
-in [`tests/fixtures/interactions.json`](./tests/fixtures/interactions.json)
-and must never be copied into production data.
-
-## Reliability evaluation
-
-`eval/ground-truth.json` contains cases with expected medicine names.
-`eval/images/` is Git-ignored; place the matching fictional image files there
-before running. The evaluation writes a Markdown table and summary to
-[`eval/results.md`](./eval/results.md):
-
-```sh
-mkdir -p eval/images
-cp public/samples/sample-prescription.png eval/images/sample-ibuprofen-aspirin.png
-node eval/run-eval.js
-```
-
-Filter by case ID or export the same report as CSV/Markdown:
-
-```sh
-node eval/run-eval.js --only sample-ibuprofen-aspirin
-node eval/run-eval.js --format csv
-node eval/run-eval.js --format markdown
-```
-
-See [`eval/README.md`](./eval/README.md) for the ground-truth format and
-evaluation options.
-
-## Access, quotas, and deployment
-
-- `API_RATE_LIMIT` defaults to 20 requests per minute per client IP.
-- `DAILY_ANALYSIS_LIMIT` defaults to 100 analyses per UTC day. Set it to `0`
-  only to disable the cap. The counter is stored in the ignored
-  `runtime/daily-analysis-usage.json` file so a Node restart does not reset it.
-  Only a completed analysis consumes a slot; retryable failures, rejected API
-  requests, and unusable model output refund the reserved slot.
-- `DEMO_ACCESS_CODE` is optional. When configured, the page asks for it and
-  sends it in a request header; it is kept only for the browser session, not in
-  the URL.
-- `INTERNAL_RELAY_TOKEN` in Node must match `PHARMA_NODE_TOKEN` in the C relay.
-  C sends it only on its server-to-server Node analysis request. A valid token
-  bypasses the internal request's per-IP quota; patient uploads to
-  `/relay/upload` remain rate-limited. Use a random 16–128 character
-  URL-safe value and never send it to the browser.
-- `RELAY_TOKEN` in Node and `PHARMA_TOKEN` in C are a separate Node-to-C relay
-  credential. They are not interchangeable with the internal Node token.
-- Set both `TLS_CERT_FILE` and `TLS_KEY_FILE` to enable direct HTTPS. A reverse
-  proxy may terminate TLS instead. Configure `TRUST_PROXY` only with the
-  address or range of the trusted proxy that connects to Node; do not trust
-  arbitrary forwarded headers.
-
-No hosting provider, TLS certificate, production secret, or public demo URL is
-configured in this repository. Do not share a public link until HTTPS, access
-code, relay binding, secrets, and the limits have been configured and tested.
-For container deployment on Render, Railway, or a VPS, see
-[`DEPLOY.md`](./DEPLOY.md).
-
-## Tests
-
-```sh
-npm test
-```
-
-The tests cover evaluation scoring and exports, accent/case normalization,
-pair ordering, duplicate names, sourced aliases, invalid entries, daily-quota
-refunds, documented versus unreviewed table status, and Fon translation
-provenance. Test fixtures use synthetic medicine names and contain no patient
-information.
+Place fictional case images in the Git-ignored `eval/images/` directory, then run `node eval/run-eval.js`. The script writes the report to [`eval/results.md`](./eval/results.md). The indicative API cost is approximately $0.02 per image. See [eval/README.md](./eval/README.md) for the ground-truth format and options.
