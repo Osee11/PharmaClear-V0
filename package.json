@@ -1,14 +1,14 @@
 {
   "name": "pharmaclear",
   "version": "1.0.0",
-  "description": "",
+  "description": "A privacy-conscious prescription transcription prototype that surfaces uncertainty and documented interaction sources.",
   "main": "index.js",
   "scripts": {
     "test": "node --test",
     "dev": "nodemon --watch server.js --watch meta.js --watch interactions.js --watch env.js --watch data --ignore uploads --ignore runtime --ignore public server.js"
   },
   "keywords": [],
-  "author": "",
+  "author": "Osée (https://github.com/Osee11/PharmaClear-V0)",
   "license": "ISC",
   "dependencies": {
     "cors": "^2.8.6",
