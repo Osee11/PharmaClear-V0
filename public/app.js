@@ -146,6 +146,13 @@ async function initializeDemoAccess(urlCode = captureUrlDemoAccessCode()) {
   }
 }
 
+function bindDemoAccessEvents() {
+  $('access-submit').addEventListener('click', () => submitDemoAccess());
+  $('access-code').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') submitDemoAccess();
+  });
+}
+
 function requestDemoAccess() {
   stopPolling();
   show('access-panel', true);
@@ -1348,10 +1355,7 @@ async function initialize() {
   $('new-btn').addEventListener('click', resetAll);
   $('save-pdf-btn').addEventListener('click', printCurrentResult);
   $('sample-btn').addEventListener('click', handleSample);
-  $('access-submit').addEventListener('click', submitDemoAccess);
-  $('access-code').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') submitDemoAccess();
-  });
+  bindDemoAccessEvents();
   $('language-select').addEventListener('change', async (event) => {
     try {
       await setLanguage(event.target.value);

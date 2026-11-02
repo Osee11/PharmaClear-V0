@@ -165,6 +165,7 @@ function createAccessHarness(url, validCode) {
       '<section id="access-panel" hidden></section>' +
       '<p id="access-error" hidden></p>' +
       '<input id="access-code">' +
+      '<button id="access-submit"></button>' +
     '</body></html>',
     { runScripts: 'outside-only', url },
   );
@@ -186,7 +187,8 @@ function createAccessHarness(url, validCode) {
     `function t(key) { return key; }` +
     `function showStep() {} function startPolling() {}` +
     appSource.slice(accessStart, accessEnd) +
-    `window.initializeDemoAccess = initializeDemoAccess;`,
+    `window.initializeDemoAccess = initializeDemoAccess;` +
+    `window.bindDemoAccessEvents = bindDemoAccessEvents;`,
   );
   return dom;
 }
@@ -214,6 +216,21 @@ test('invalid URL access code shows the entry form, removes the stored code, and
   assert.equal(window.document.getElementById('access-error').textContent, 'accessInvalid');
   assert.equal(window.sessionStorage.getItem('pharmaclear:demo-access-code'), null);
   assert.equal(window.location.href, 'https://pharmaclear.test/?keep=1');
+});
+
+test('manual access code submission does not pass the click event as the code', async (t) => {
+  const dom = createAccessHarness('https://pharmaclear.test/', 'valid-demo');
+  t.after(() => dom.window.close());
+  const { window } = dom;
+  const accessInput = window.document.getElementById('access-code');
+  accessInput.value = '  valid-demo  ';
+
+  window.bindDemoAccessEvents();
+  window.document.getElementById('access-submit').click();
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+  assert.equal(window.document.getElementById('access-panel').hidden, true);
+  assert.equal(window.sessionStorage.getItem('pharmaclear:demo-access-code'), 'valid-demo');
 });
 
 const renderCases = [
