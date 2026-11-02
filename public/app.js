@@ -599,7 +599,8 @@ function buildPrintReport(result, { includePhoto = false, photoUrl = null, now =
   const documented = interactions.filter((item) => item && item.status === 'verified');
   const detected = Array.isArray(data.detected_drugs) ? data.detected_drugs : [];
   const uncertain = Array.isArray(data.uncertain) ? data.uncertain : [];
-  const aiSuggestions = Array.isArray(data.ai_suggested_interactions)
+  const aiSuggestions = data.ai_interactions_enabled === true &&
+    Array.isArray(data.ai_suggested_interactions)
     ? data.ai_suggested_interactions.filter((item) =>
       item && item.status === 'ai_suggested' && item.review_status === 'ai_unverified')
     : [];
@@ -729,6 +730,7 @@ function buildPrintReport(result, { includePhoto = false, photoUrl = null, now =
     image.alt = t('photoAlt');
     photoSection.appendChild(image);
   }
+  addText(report, 'p', 'print-reference-footer', t('referenceInfoFooter'));
   addText(report, 'p', 'print-report-footer', t('footerDisclaimer'));
   return report;
 }
@@ -780,7 +782,8 @@ function renderResult(result, isSample = false) {
   const interactions = Array.isArray(data.interactions) ? data.interactions : [];
   const verified = interactions.filter((item) => item && item.status === 'verified');
   const unverifiedCount = interactions.filter((item) => item && item.status === 'not_verified').length;
-  const aiSuggestions = Array.isArray(data.ai_suggested_interactions)
+  const aiSuggestions = data.ai_interactions_enabled === true &&
+    Array.isArray(data.ai_suggested_interactions)
     ? data.ai_suggested_interactions.filter((item) =>
       item && item.status === 'ai_suggested' && item.review_status === 'ai_unverified')
     : [];
@@ -866,6 +869,7 @@ function renderResult(result, isSample = false) {
           ? t('dailyLimitUnavailable')
           : data.error || t('errorAnalysis')));
     box.appendChild(cards);
+    box.appendChild(makeElement('p', 'result-reference-footer', t('referenceInfoFooter')));
     return;
   }
 
@@ -1046,6 +1050,7 @@ function renderResult(result, isSample = false) {
   }
 
   box.appendChild(cards);
+  box.appendChild(makeElement('p', 'result-reference-footer', t('referenceInfoFooter')));
 }
 
 async function showResult(result) {

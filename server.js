@@ -8,17 +8,18 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const { createDailyAnalysisLimiter } = require('./daily-limit');
-const { addAiInteractionSuggestions } = require('./ai-interactions');
+const {
+  addAiInteractionSuggestionsWhenEnabled,
+  aiInteractionsEnabled,
+} = require('./ai-interactions');
 const {
   analyzePrescription,
   suggestDrugInteractions,
-  translateInteractionSummaryToFon,
   UpstreamError,
   ModelOutputError,
   CONFIG,
 } = require('./meta');
 const {
-  addFonSummaries,
   checkDrugInteraction,
   checkDrugInteractions,
 } = require('./interactions');
@@ -31,6 +32,7 @@ const DAILY_ANALYSIS_LIMIT = process.env.DAILY_ANALYSIS_LIMIT === undefined
 const DAILY_AI_INTERACTION_LIMIT = process.env.DAILY_AI_INTERACTION_LIMIT === undefined
   ? 200
   : Number(process.env.DAILY_AI_INTERACTION_LIMIT);
+const AI_INTERACTIONS_ENABLED = aiInteractionsEnabled();
 const RATE_WINDOW_MS = 60 * 1000;
 const RELAY_URL = (process.env.RELAY_URL || 'http://127.0.0.1:8080').replace(/\/+$/, '');
 const RELAY_TOKEN = process.env.RELAY_TOKEN || '';
@@ -266,7 +268,7 @@ app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
     reservation = dailySlot.reservation;
     if (MOCK) {
       const result = await mockResult();
-      result.ai_suggested_interactions = await addAiInteractionSuggestions({
+      const aiSuggestions = await addAiInteractionSuggestionsWhenEnabled(AI_INTERACTIONS_ENABLED, {
         detectedDrugs: result.detected_drugs,
         documentedInteractions: result.interactions,
         documentedPairChecker: checkDrugInteraction,
@@ -275,18 +277,15 @@ app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
         mock: true,
         limit: DAILY_AI_INTERACTION_LIMIT,
       });
+      result.ai_interactions_enabled = AI_INTERACTIONS_ENABLED;
+      if (AI_INTERACTIONS_ENABLED) result.ai_suggested_interactions = aiSuggestions;
       analysisCompleted = true;
       return res.json(result);
     }
 
     const result = await analyzePrescription(buffer, file.mimetype);
     const interactions = await checkDrugInteractions(result.detected_drugs);
-    const checks = await addFonSummaries(
-      interactions.checks,
-      translateInteractionSummaryToFon,
-      (error) => console.error('Fon translation unavailable for a verified interaction:', error.message),
-    );
-    const aiSuggestions = await addAiInteractionSuggestions({
+    const aiSuggestions = await addAiInteractionSuggestionsWhenEnabled(AI_INTERACTIONS_ENABLED, {
       detectedDrugs: result.detected_drugs,
       documentedInteractions: interactions.checks,
       documentedPairChecker: checkDrugInteraction,
@@ -299,8 +298,9 @@ app.post('/api/analyze', requireAnalysisAccess, limitPublicAnalyzeRequests,
     return res.json({
       ...result,
       interaction_status: interactions.status,
-      interactions: checks,
-      ai_suggested_interactions: aiSuggestions,
+      interactions: interactions.checks,
+      ai_interactions_enabled: AI_INTERACTIONS_ENABLED,
+      ...(AI_INTERACTIONS_ENABLED ? { ai_suggested_interactions: aiSuggestions } : {}),
     });
   } catch (e) {
     if (e instanceof UpstreamError) {

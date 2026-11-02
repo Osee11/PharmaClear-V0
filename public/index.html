@@ -64,6 +64,9 @@
     <symbol id="icon-arrow" viewBox="0 0 24 24">
       <path d="M7 17 17 7M8 7h9v9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/>
     </symbol>
+    <symbol id="icon-expand" viewBox="0 0 24 24">
+      <path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+    </symbol>
     <symbol id="icon-document" viewBox="0 0 24 24">
       <path d="M6 3.5h8l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 20V5a1.5 1.5 0 0 1 1-1.5Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.8"/>
       <path d="M14 3.5V8h4M8 12h8M8 15.5h8M8 19h5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"/>
@@ -97,6 +100,7 @@
   <main>
     <button id="thumb-preview" class="thumb-preview" type="button" aria-label="Your prescription photo — tap to enlarge" hidden>
       <img id="thumb" class="thumb" alt="">
+      <svg class="thumb-expand-icon" aria-hidden="true"><use href="#icon-expand"></use></svg>
     </button>
 
     <section id="access-panel" class="panel access-panel" hidden>

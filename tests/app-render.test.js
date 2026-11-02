@@ -31,6 +31,7 @@ test('all locale files are valid UTF-8 JSON and static page keys exist in Englis
     assert.equal(typeof JSON.parse(text), 'object', `${locale}.json should be valid JSON`);
   }
   const html = fs.readFileSync(path.join(publicDirectory, 'index.html'), 'utf8');
+  const styles = fs.readFileSync(path.join(publicDirectory, 'style.css'), 'utf8');
   const english = require('../public/i18n/en.json');
   const french = require('../public/i18n/fr.json');
   const fon = require('../public/i18n/fon.json');
@@ -45,6 +46,7 @@ test('all locale files are valid UTF-8 JSON and static page keys exist in Englis
   assert.equal(fon.photoViewerTitle, '');
   assert.equal(fon.closePhotoViewer, '');
   assert.equal(fon.photoRetention, '');
+  assert.equal(fon.referenceInfoFooter, '');
   for (const key of [
     'aiSuggestedTitle',
     'aiSuggestedDisclaimer',
@@ -60,6 +62,7 @@ test('all locale files are valid UTF-8 JSON and static page keys exist in Englis
     'printNoDocumented',
     'printUnreviewed',
     'severityLabel',
+    'referenceInfoFooter',
   ]) {
     assert.equal(typeof english[key], 'string');
     assert.equal(typeof french[key], 'string');
@@ -69,7 +72,14 @@ test('all locale files are valid UTF-8 JSON and static page keys exist in Englis
     english.photoRetention,
     'Deleted from our server right after analysis. On your phone, it stays only while you review it.',
   );
-  assert.match(fs.readFileSync(path.join(publicDirectory, 'style.css'), 'utf8'),
+  assert.equal(english.referenceInfoFooter,
+    'Reference information from a drug label. Not medical advice. Ask a pharmacist.');
+  assert.equal(french.referenceInfoFooter,
+    'Information de référence issue d’une étiquette de médicament. Pas un avis médical. Demandez à un pharmacien.');
+  assert.match(html, /class="thumb-expand-icon"[^>]*><use href="#icon-expand"><\/use><\/svg>/);
+  assert.match(styles, /\.thumb\s*\{[^}]*width:\s*100%;[^}]*height:\s*120px;[^}]*object-fit:\s*cover;/s);
+  assert.match(styles, /\.thumb-expand-icon\s*\{[^}]*position:\s*absolute;/s);
+  assert.match(styles,
     /@page\s*\{\s*size:\s*A4;\s*margin:\s*18mm;/);
 });
 
@@ -433,12 +443,13 @@ test('no verified interaction card is rendered without a verified alert', (t) =>
   assert.equal(dom.window.document.querySelectorAll('.interaction-unverified').length, 1);
 });
 
-test('AI suggestions render as a separate unverified section after the documented-status note', (t) => {
+test('AI suggestions render as a separate unverified section after the documented-status note when enabled', (t) => {
   const dom = createRenderer();
   t.after(() => dom.window.close());
   const { window } = dom;
   window.renderResult({
     status: 'success',
+    ai_interactions_enabled: true,
     interaction_status: 'not_verified',
     interactions: [{
       status: 'not_verified',
@@ -460,7 +471,7 @@ test('AI suggestions render as a separate unverified section after the documente
   const note = content.querySelector('.interaction-unverified');
   const aiCard = content.querySelector('.result-card--ai');
   assert.ok(note);
-  assert.match(note.textContent, /No documented interaction found — not verified/);
+  assert.match(note.textContent, /No source entry was found for/);
   assert.ok(aiCard);
   assert.ok(note.compareDocumentPosition(aiCard) & window.Node.DOCUMENT_POSITION_FOLLOWING);
   assert.match(aiCard.querySelector('h2').textContent, /AI-suggested interactions \(not verified\)/);
@@ -472,6 +483,7 @@ test('AI suggestions render as a separate unverified section after the documente
   window.setRenderLanguage('fr', require('../public/i18n/fr.json'));
   window.renderResult({
     status: 'success',
+    ai_interactions_enabled: true,
     interactions: [],
     ai_suggested_interactions: [{
       status: 'ai_suggested',
@@ -491,11 +503,38 @@ test('AI suggestions render as a separate unverified section after the documente
   );
 });
 
+test('disabled AI suggestions are omitted from the result and PDF, with the reference footer shown', (t) => {
+  const dom = createRenderer();
+  t.after(() => dom.window.close());
+  const result = {
+    status: 'success',
+    ai_interactions_enabled: false,
+    interactions: [],
+    ai_suggested_interactions: [{
+      status: 'ai_suggested',
+      review_status: 'ai_unverified',
+      drug_a: 'TEST-ONLY-A',
+      drug_b: 'TEST-ONLY-B',
+      severity: 'avoid',
+      summary_en: 'TEST ONLY: hidden content.',
+    }],
+  };
+  dom.window.renderResult(result);
+  assert.equal(dom.window.document.querySelector('.result-card--ai'), null);
+  assert.match(dom.window.document.querySelector('.result-reference-footer').textContent,
+    /Reference information from a drug label/);
+
+  const report = dom.window.buildPrintReport(result);
+  assert.doesNotMatch(report.textContent, /TEST ONLY: hidden content|AI-suggested interactions/);
+  assert.match(report.textContent, /Reference information from a drug label/);
+});
+
 test('Fon users see English-only AI suggestions and the language limitation notice', (t) => {
   const dom = createRenderer('fon');
   t.after(() => dom.window.close());
   dom.window.renderResult({
     status: 'success',
+    ai_interactions_enabled: true,
     interactions: [{ status: 'not_verified', drug_a: 'TEST-ONLY-A', drug_b: 'TEST-ONLY-B' }],
     ai_suggested_interactions: [{
       status: 'ai_suggested',
@@ -513,7 +552,8 @@ test('Fon users see English-only AI suggestions and the language limitation noti
     'Shown in English or French only');
   assert.equal(card.querySelector('.ai-interaction-summary').textContent,
     'TEST ONLY: English summary.');
-  assert.match(card.querySelector('.ai-severity-badge').textContent, /Monitor/);
+  assert.match(card.querySelector('.ai-severity-badge').textContent,
+    /Interaction listed|Interaction noted|Effect described/);
 });
 
 test('interaction explanations follow the global language and show Fon provenance', (t) => {
@@ -610,7 +650,8 @@ test('unreviewed alert includes source and date; reviewed alert omits the notice
     window.document.querySelector('.unreviewed-note').textContent,
     'Source: FDA drug label (Oct 2025). Not yet reviewed by a pharmacist.',
   );
-  assert.match(window.document.querySelector('.severity-badge').textContent, /Avoid/);
+  assert.match(window.document.querySelector('.severity-badge').textContent,
+    /Interaction listed|Interaction noted|Effect described/);
 
   interaction.review_status = 'reviewed';
   window.renderResult({ status: 'success', interactions: [interaction] });
@@ -643,7 +684,8 @@ test('French unreviewed notice localizes the pair source name and publication da
     dom.window.document.querySelector('.unreviewed-note').textContent,
     "Source : étiquetage FDA (oct. 2025). Pas encore relu par un pharmacien.",
   );
-  assert.match(dom.window.document.querySelector('.severity-badge').textContent, /À éviter|Prudence|À surveiller/);
+  assert.match(dom.window.document.querySelector('.severity-badge').textContent,
+    /Interaction mentionnée|Interaction signalée|Effet décrit/);
 });
 
 test('Fon notice and documented severity use supplied localization data', (t) => {
@@ -696,8 +738,10 @@ test('print report shows the no-documentation warning, omits unchecked photo, an
   window.runPrintCurrentResult();
   const report = window.$('print-report');
   assert.equal(report.hidden, false);
-  assert.match(report.textContent, /No documented interaction found — not verified\./);
-  assert.match(report.textContent, /This does not mean the combination is safe\./);
+  assert.match(report.textContent, /No drug-label information was found for this pair/);
+  assert.match(report.textContent, /This is not a safety assessment/);
+  assert.match(report.textContent,
+    /Reference information from a drug label\. Not medical advice\. Ask a pharmacist\./);
   assert.match(report.textContent, /TEST-ONLY-READ/);
   assert.match(report.textContent, /TEST-ONLY-UNCERTAIN/);
   assert.equal(report.querySelector('img'), null);
@@ -714,6 +758,7 @@ test('print report includes photo only on request and labels an unreviewed docum
   t.after(() => dom.window.close());
   const report = dom.window.buildPrintReport({
     status: 'success',
+    ai_interactions_enabled: true,
     detected_drugs: [],
     uncertain: [],
     interactions: [{
@@ -771,5 +816,7 @@ test('Fon print report falls back to English and preserves Fon characters in sou
   });
   assert.match(report.textContent, /PharmaClear — Prescription reading summary/);
   assert.match(report.textContent, /Medicines read with confidence/);
+  assert.match(report.textContent,
+    /Reference information from a drug label\. Not medical advice\. Ask a pharmacist\./);
   assert.ok(report.textContent.includes(glyphs));
 });

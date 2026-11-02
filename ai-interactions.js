@@ -28,6 +28,10 @@ function hasUndocumentedPair(names, interactions) {
   return findUndocumentedPair(names, interactions) !== null;
 }
 
+function aiInteractionsEnabled(environment = process.env) {
+  return environment.AI_INTERACTIONS === '1';
+}
+
 function simulatedSuggestion(drugA, drugB) {
   return [{
     status: 'ai_suggested',
@@ -109,8 +113,15 @@ async function addAiInteractionSuggestions({
   }
 }
 
+async function addAiInteractionSuggestionsWhenEnabled(enabled, options) {
+  if (!enabled) return [];
+  return addAiInteractionSuggestions(options);
+}
+
 module.exports = {
   addAiInteractionSuggestions,
+  addAiInteractionSuggestionsWhenEnabled,
+  aiInteractionsEnabled,
   hasUndocumentedPair,
   simulatedSuggestion,
 };

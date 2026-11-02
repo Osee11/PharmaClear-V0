@@ -9,10 +9,20 @@ const {
   selectConfidentDrugs,
   validateAiInteractionSuggestions,
 } = require('../interactions');
-const { addAiInteractionSuggestions } = require('../ai-interactions');
+const {
+  addAiInteractionSuggestions,
+  addAiInteractionSuggestionsWhenEnabled,
+  aiInteractionsEnabled,
+} = require('../ai-interactions');
 const fixture = require('./fixtures/interactions.json');
 
 const fixtureChecker = createInteractionChecker(fixture);
+
+test('AI interaction suggestions require explicit opt-in', () => {
+  assert.equal(aiInteractionsEnabled({}), false);
+  assert.equal(aiInteractionsEnabled({ AI_INTERACTIONS: '0' }), false);
+  assert.equal(aiInteractionsEnabled({ AI_INTERACTIONS: '1' }), true);
+});
 
 test('unknown pairs are explicitly unverified in production data', async () => {
   const result = await checkDrugInteractions([
@@ -48,6 +58,17 @@ test('a production table pair is returned as unreviewed without startup failure'
   });
   assert.equal(withFon.summary_fon_human, result.summary_fon_human);
   assert.equal(withFon.summary_fon, undefined);
+});
+
+test('production reference summaries are attributed facts rather than instructions', () => {
+  const data = require('../data/interactions.json');
+  assert.equal(data.pairs.length, 5);
+  for (const pair of data.pairs) {
+    assert.match(pair.summary_en, /^The US FDA drug label /);
+    assert.match(pair.summary_fr, /^L’étiquette du médicament publiée par la FDA américaine /);
+    assert.doesNotMatch(pair.summary_en, /\b(avoid|take|do not take|should|must)\b/i);
+    assert.doesNotMatch(pair.summary_fr, /\b(éviter|prenez|prendre|doit|devrait)\b/i);
+  }
 });
 
 test('review status is calculated from the table metadata', async () => {
@@ -302,6 +323,23 @@ test('AI failure or invalid JSON leaves level-one interactions unchanged', async
     drug_a: 'TEST-ONLY-ALPHA',
     drug_b: 'TEST-ONLY-BETA',
   }]);
+});
+
+test('AI interaction suggestions remain disabled without calling the model or quota', async () => {
+  let modelCalls = 0;
+  let quotaCalls = 0;
+  const result = await addAiInteractionSuggestionsWhenEnabled(false, {
+    detectedDrugs: [
+      { name: 'TEST-ONLY-ALPHA', confidence: 0.9 },
+      { name: 'TEST-ONLY-BETA', confidence: 0.8 },
+    ],
+    documentedInteractions: [],
+    dailyLimiter: { consume: async () => { quotaCalls++; return { allowed: true }; } },
+    suggest: async () => { modelCalls++; return '{"pairs":[]}'; },
+  });
+  assert.deepEqual(result, []);
+  assert.equal(modelCalls, 0);
+  assert.equal(quotaCalls, 0);
 });
 
 test('fewer than two confident medicines skip the AI call and the separate quota', async () => {

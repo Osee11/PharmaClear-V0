@@ -20,7 +20,7 @@ Do not put secrets in Docker build arguments, the Dockerfile, source control,
 or a public URL. Use separate random values for the relay credential and
 internal relay credential. Other optional runtime settings include
 `DAILY_ANALYSIS_LIMIT`, `DAILY_AI_INTERACTION_LIMIT` (default `200`),
-`API_RATE_LIMIT`, `FON_MT`, `TRUST_PROXY`,
+`AI_INTERACTIONS` (default `0`), `API_RATE_LIMIT`, `TRUST_PROXY`,
 `CORS_ORIGIN`, `PHARMA_MOCK`, `MODEL_REASONING_EFFORT` (`low`, `medium`, or
 `high`; default `low`), and `MODEL_MAX_OUTPUT_TOKENS` (positive integer;
 default `4000`).
@@ -52,7 +52,7 @@ default `4000`).
 - **Runtime variables to configure:** `MODEL_API_KEY`, `DEMO_ACCESS_CODE`,
   `RELAY_TOKEN` or `PHARMA_TOKEN`, `INTERNAL_RELAY_TOKEN` or
   `PHARMA_NODE_TOKEN`, `DAILY_ANALYSIS_LIMIT`, `DAILY_AI_INTERACTION_LIMIT`,
-  `API_RATE_LIMIT`, `FON_MT`,
+  `AI_INTERACTIONS` (default `0`), `API_RATE_LIMIT`,
   `TRUST_PROXY`, `CORS_ORIGIN`, `PHARMA_MOCK`, `MODEL_REASONING_EFFORT`,
   and `MODEL_MAX_OUTPUT_TOKENS`. Render supplies `PORT`.
 

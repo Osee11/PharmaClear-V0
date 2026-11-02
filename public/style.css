@@ -140,19 +140,35 @@ main {
   box-shadow: var(--shadow-card);
 }
 .thumb-preview {
+  position: relative;
   width: 100%;
-  min-height: 48px;
   display: block;
   margin: 0 0 16px;
-  padding: 6px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 14px;
   cursor: zoom-in;
 }
 .thumb {
   width: 100%;
+  height: 120px;
   max-height: 120px;
   display: block;
-  border-radius: 12px;
-  object-fit: contain;
+  border-radius: inherit;
+  object-fit: cover;
+}
+.thumb-expand-icon {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 34px;
+  height: 34px;
+  padding: 7px;
+  border: 1px solid rgb(255 255 255 / 70%);
+  border-radius: 10px;
+  background: rgb(6 31 24 / 72%);
+  color: #fff;
+  pointer-events: none;
 }
 .photo-viewer {
   position: fixed;
@@ -398,6 +414,16 @@ body.photo-viewer-open { overflow: hidden; }
 .sample-banner { border-color: #b9c9ed; background: var(--blue-100); color: var(--blue-900); }
 .mock-banner { border-color: #c4d2cc; background: #edf3f0; color: #344840; }
 .result { display: grid; gap: 13px; }
+.result-reference-footer {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--muted);
+  font-size: .82rem;
+  text-align: center;
+}
 .result-summary {
   padding: 18px;
   border: 1px solid #bfdfcf;
