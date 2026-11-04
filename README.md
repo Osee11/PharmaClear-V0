@@ -4,14 +4,18 @@ PharmaClear transcribes photographed prescriptions and keeps uncertain readings 
 
 ## Try the demo
 
-URL: `<DEPLOY_URL>` · Demo code: `<DEMO_CODE>`
+URL: `https://pharmaclear-v0.onrender.com` · Demo code: `Pharma-Demo-2026`
+
+Quick access (demo code included): [Open the demo directly](https://pharmaclear-v0.onrender.com/?code=Pharma-Demo-2026) — you won't need to enter the demo code manually.
+
+> **Please wait a little for the site to load.** It is hosted on Render's free tier, so it may take up to about a minute to start if it has been idle.
 
 1. Open the URL and enter the demo code.
 2. Choose English, French, or Fon.
 3. Select **Try a sample prescription** or take a photo.
 4. Review the transcription, uncertain readings, and cited source information.
 
-First load may take about a minute if the free server was asleep. When offline, a photo is queued on the device and analysis resumes when the network returns. Analysis itself requires a network connection.
+When offline, a photo is queued on the device and analysis resumes when the network returns. Analysis itself requires a network connection.
 
 The sample uses the fictional [prescription image](./public/samples/sample-prescription.png).
 
